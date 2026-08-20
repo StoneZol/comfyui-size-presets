@@ -5,6 +5,8 @@ import { SAVE_ICON_SVG, LOAD_ICON_SVG, SWAP_ICON_SVG } from "./sp/icons.js";
 import { openSavePresetPopup } from "./sp/save_dialog.js";
 import { openLoadPresetPopup } from "./sp/load_dialog.js";
 import { openManagerPopup } from "./sp/manager_dialog.js";
+// import { CHEVRON_ICON_SVG } from "./sp/icons.js";
+// import { openPopup } from "./sp/popup.js";
 
 const config = await loadConfig();
 injectStyles(config.style_id);
@@ -13,6 +15,37 @@ const MIN_NODE_WIDTH = 280;
 const BUTTON_PANEL_HEIGHT = 96;
 const SOCKET_ROWS_HEIGHT = 56;
 const WIDGET_ROW_HEIGHT = 28;
+
+/*
+ * Scale row (÷ coef ×) — disabled until rounding matches other resizers.
+ *
+ * const MIN_SIZE = 64;
+ * const MAX_SIZE = 8192;
+ * const SIZE_STEP = 2;
+ * const DEFAULT_SCALE = 1.5;
+ * const SCALE_PRESETS = [1.25, 1.5, 1.75, 2];
+ *
+ * function snapSize(value) {
+ *   const n = Math.round(Number(value) / SIZE_STEP) * SIZE_STEP;
+ *   return Math.max(MIN_SIZE, Math.min(MAX_SIZE, n));
+ * }
+ *
+ * function readScaleCoef(input) {
+ *   const value = Number(input?.value);
+ *   if (!Number.isFinite(value) || value <= 0) return null;
+ *   return value;
+ * }
+ *
+ * function scaleSize(node, factor, divide) {
+ *   const f = Number(factor);
+ *   if (!Number.isFinite(f) || f <= 0) return;
+ *   const mult = divide ? 1 / f : f;
+ *   const { width, height } = readSize(node);
+ *   applySize(node, snapSize(width * mult), snapSize(height * mult));
+ * }
+ *
+ * function openScalePresetPicker({ anchor, current, onPick, onClose }) { ... }
+ */
 
 function findSizeWidget(node, name) {
   return node.widgets?.find((w) => w.name === name);
@@ -130,6 +163,13 @@ app.registerExtension({
       switchBtn.innerHTML = `${SWAP_ICON_SVG}<span>Switch size</span>`;
 
       root.append(switchBtn, libraryRow, managerBtn);
+
+      /*
+      const scaleRow = document.createElement("div");
+      scaleRow.className = "sp-scale-row";
+      // ... ÷ [coef ▾] × — see commented block at top of file
+      root.appendChild(scaleRow);
+      */
 
       loadBtn.addEventListener("click", (e) => {
         e.stopPropagation();

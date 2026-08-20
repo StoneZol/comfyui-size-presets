@@ -297,7 +297,7 @@ function makeFolderSection({
 function folderExpanded(name, { query, openMap }) {
   if ((query || "").trim()) return true;
   if (openMap?.has(name)) return openMap.get(name);
-  return false;
+  return name === UNCATEGORISED;
 }
 
 function makeItemRow(preset, { onEdit, onCopy, onMove, onClone, onDelete }) {

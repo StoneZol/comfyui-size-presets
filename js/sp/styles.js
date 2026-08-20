@@ -77,6 +77,16 @@ const CSS = `
   filter: brightness(1.15);
 }
 
+/*
+ * Scale row — disabled until polished (see size_presets.js).
+ *
+ * .sp-scale-row { ... }
+ * .sp-scale-btn { ... }
+ * .sp-scale-coef-wrap { ... }
+ * .sp-scale-coef { ... }
+ * .sp-scale-pick { ... }
+ */
+
 .sp-save-btn svg,
 .sp-load-btn svg,
 .sp-switch-btn svg {

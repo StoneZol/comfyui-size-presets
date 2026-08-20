@@ -712,7 +712,7 @@ function injectPopupStyles() {
 
 const popupStack = [];
 
-function placePopup(el, { anchor, position, centered }) {
+function placePopup(el, { anchor, position, centered, pinTop }) {
     const margin = 8;
     const gap = 4;
     let x = position?.x ?? margin;
@@ -728,7 +728,12 @@ function placePopup(el, { anchor, position, centered }) {
     }
 
     const box = el.getBoundingClientRect();
-    if (centered) {
+    if (pinTop != null) {
+        y = pinTop;
+        if (anchorRect) {
+            x = anchorRect.left + (anchorRect.width - box.width) / 2;
+        }
+    } else if (centered) {
         x = (window.innerWidth - box.width) / 2;
         const anchorY = window.innerHeight * 0.4;
         y = anchorY - box.height / 2;
@@ -745,9 +750,13 @@ function placePopup(el, { anchor, position, centered }) {
     }
 
     const maxX = Math.max(margin, window.innerWidth - box.width - margin);
-    const maxY = Math.max(margin, window.innerHeight - box.height - margin);
     el.style.left = `${Math.max(margin, Math.min(x, maxX))}px`;
-    el.style.top = `${Math.max(margin, Math.min(y, maxY))}px`;
+    if (pinTop != null) {
+        el.style.top = `${pinTop}px`;
+    } else {
+        const maxY = Math.max(margin, window.innerHeight - box.height - margin);
+        el.style.top = `${Math.max(margin, Math.min(y, maxY))}px`;
+    }
     el.style.visibility = "visible";
 }
 
@@ -801,6 +810,7 @@ export function openPopup(opts) {
     let closed = false;
     let resizeObserver = null;
     let repositionScheduled = false;
+    let pinnedTop = null;
     const placementOpts = {
         anchor: opts.anchor,
         position: opts.position,
@@ -809,7 +819,14 @@ export function openPopup(opts) {
 
     function reposition() {
         if (closed) return;
-        placePopup(root, placementOpts);
+        placePopup(root, {
+            ...placementOpts,
+            pinTop: !opts.centered && pinnedTop != null ? pinnedTop : undefined,
+        });
+        if (!opts.centered && pinnedTop == null) {
+            const top = parseFloat(root.style.top);
+            if (Number.isFinite(top)) pinnedTop = top;
+        }
     }
 
     function scheduleReposition() {

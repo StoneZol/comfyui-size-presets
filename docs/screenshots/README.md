@@ -4,11 +4,7 @@ Used by the main [README](../../README.md).
 
 | File | Content |
 |------|---------|
-| `0.png` | Prompt Concatenate Pro node with groups and outputs |
-| `1.png` | Save preset dialog |
-| `2.png` | Save pair dialog |
-| `3.png` | Load preset dialog |
-| `4.png` | Load pair with prompt preview |
-| `5.png` | Library manager · Stacks |
-| `6.png` | Library manager · Prompts |
-| `7.png` | Edit prompt dialog |
+| `1.png` | Size Presets node — width/height, Switch size, Load/Save, Manager |
+| `2.png` | Load preset — categories and size cards |
+| `3.png` | Save preset — size fields, preview, category choose |
+| `4.png` | Size manager — categories, edit size |

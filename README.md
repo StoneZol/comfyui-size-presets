@@ -8,6 +8,18 @@ MIT — see [LICENSE](LICENSE)
 
 ---
 
+## Screenshots
+
+| Node                                         | Load preset                            |
+| -------------------------------------------- | -------------------------------------- |
+| ![Size Presets node](docs/screenshots/1.png) | ![Load preset](docs/screenshots/2.png) |
+
+| Save preset                            | Manager                                 |
+| -------------------------------------- | --------------------------------------- |
+| ![Save preset](docs/screenshots/3.png) | ![Size manager](docs/screenshots/4.png) |
+
+---
+
 ## Features
 
 - **Native width / height** — INT widgets you can pin and wire to Empty Latent Image, etc.
@@ -38,13 +50,13 @@ No pip dependencies — Python 3.8+ stdlib + SQLite only.
 ## Node layout
 
 ```
+      │ width  ──→
+      │ height ──→
 width  [____512____]
 height [____512____]
 [   Switch size   ]
 [Load preset] [Save preset]
 [     Manager     ]
-      │ width  ──→
-      │ height ──→
 ```
 
 ---
@@ -88,7 +100,7 @@ comfyui-size-presets/
 
 ## API routes
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| GET/POST/PATCH/DELETE | `/size_presets/sizes` | List, save, move, delete presets |
-| GET/PATCH/DELETE | `/size_presets/categories` | List, rename, delete categories |
+| Method                | Path                       | Purpose                          |
+| --------------------- | -------------------------- | -------------------------------- |
+| GET/POST/PATCH/DELETE | `/size_presets/sizes`      | List, save, move, delete presets |
+| GET/PATCH/DELETE      | `/size_presets/categories` | List, rename, delete categories  |
