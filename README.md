@@ -76,7 +76,7 @@ height [____512____]
 
 Presets are stored in `db/presets.sqlite` (auto-created on first use).
 
-Each preset is uniquely identified by `(category, width, height)`. Saving the same size in the same category again updates the existing entry (with overwrite confirmation).
+Each preset is uniquely identified by `(category, width, height)`. Saving a size that already exists in that category is rejected — no overwrite.
 
 Default uncategorised bucket: **Uncategorised**.
 

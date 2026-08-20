@@ -2,7 +2,7 @@
 
 ## 1.0.0 — 2026-08-20
 
-Initial release. Refactored from Prompt Concatenate Pro into a dedicated size presets node.
+Initial release.
 
 - Native width/height INT inputs and outputs
 - Save / Load / Manager / Switch size buttons
