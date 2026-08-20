@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-size-presets"
+description = "Save and load width/height size presets for ComfyUI — native INT inputs, categories, search, and a built-in SQLite library."
+version = "1.0.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/StoneZol/comfyui-size-presets"
+
+[tool.comfy]
+PublisherId = "stone-zol"
+DisplayName = "Size Presets"
+Icon = ""
+Banner = ""

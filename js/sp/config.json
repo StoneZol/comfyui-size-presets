@@ -1,0 +1,7 @@
+{
+  "extension_name": "size.presets",
+  "node_class": "SizePresets",
+  "node_display_name": "Size Presets",
+  "style_id": "size-presets-styles",
+  "log_prefix": "[SizePresets]"
+}
