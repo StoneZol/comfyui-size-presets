@@ -21,7 +21,7 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
       const filter = document.createElement("input");
       filter.className = "sp-popup-input";
       filter.type = "text";
-      filter.placeholder = "filter";
+      filter.placeholder = "filter or new name";
 
       const list = document.createElement("div");
       list.className = "sp-pick-list";
@@ -32,14 +32,32 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
       function paint() {
         const q = filter.value.trim().toLowerCase();
         list.replaceChildren();
+
         const shown = items.filter((name) => matchesCategory(name, q));
-        if (!shown.length) {
+        const typed = filter.value.trim();
+        const exactMatch = typed && items.some((name) => (name || "").toLowerCase() === typed.toLowerCase());
+
+        if (typed && !exactMatch) {
+          const createBtn = document.createElement("button");
+          createBtn.type = "button";
+          createBtn.className = "sp-pick-item selected";
+          createBtn.textContent = `Use “${typed}”`;
+          createBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            close();
+            onPick?.(typed);
+          });
+          list.appendChild(createBtn);
+        }
+
+        if (!shown.length && !typed) {
           const empty = document.createElement("div");
           empty.className = "sp-popup-message";
-          empty.textContent = "No categories";
+          empty.textContent = "No categories yet";
           list.appendChild(empty);
           return;
         }
+
         for (const name of shown) {
           const btn = document.createElement("button");
           btn.type = "button";
@@ -114,7 +132,8 @@ export function openSavePresetPopup({ anchor, width, height }) {
       const folder = document.createElement("input");
       folder.className = "sp-popup-input";
       folder.type = "text";
-      folder.placeholder = UNCATEGORISED;
+      folder.placeholder = "category (type or choose)";
+      folder.autocomplete = "off";
 
       const pickBtn = document.createElement("button");
       pickBtn.type = "button";
@@ -134,17 +153,8 @@ export function openSavePresetPopup({ anchor, width, height }) {
       confirm.className = "sp-popup-btn primary";
       confirm.textContent = "Save";
 
-      let overwrite = false;
       let categories = [];
       let picker = null;
-
-      function resetOverwrite() {
-        if (!overwrite) return;
-        overwrite = false;
-        confirm.textContent = "Save";
-        confirm.classList.remove("danger");
-        confirm.classList.add("primary");
-      }
 
       pickBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -179,14 +189,9 @@ export function openSavePresetPopup({ anchor, width, height }) {
             category: folder.value.trim(),
             width: w,
             height: h,
-            overwrite,
           });
           if (result.conflicts?.length) {
             errorEl.textContent = `${w} × ${h} already exists in this category`;
-            confirm.textContent = "Overwrite";
-            confirm.classList.add("danger");
-            confirm.classList.remove("primary");
-            overwrite = true;
             return;
           }
           if (!result.ok) {
@@ -205,9 +210,15 @@ export function openSavePresetPopup({ anchor, width, height }) {
         e.stopPropagation();
         submit();
       });
-      widthField.input.addEventListener("input", resetOverwrite);
-      heightField.input.addEventListener("input", resetOverwrite);
-      folder.addEventListener("input", resetOverwrite);
+      widthField.input.addEventListener("input", () => {
+        if (errorEl.textContent) errorEl.textContent = "";
+      });
+      heightField.input.addEventListener("input", () => {
+        if (errorEl.textContent) errorEl.textContent = "";
+      });
+      folder.addEventListener("input", () => {
+        if (errorEl.textContent) errorEl.textContent = "";
+      });
       widthField.input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();

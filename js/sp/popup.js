@@ -212,6 +212,37 @@ const CSS = `
   user-select: none;
 }
 
+.sp-toggle {
+  position: relative;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: #46464c;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sp-toggle.on {
+  background: #a78bfa;
+}
+
+.sp-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e8e8ea;
+  transition: left 0.15s ease;
+  pointer-events: none;
+}
+
+.sp-toggle.on .sp-toggle-knob {
+  left: 16px;
+}
+
 .sp-preset-peek {
   flex: 0 0 28px;
   width: 28px;
@@ -472,7 +503,7 @@ const CSS = `
 
 .sp-mgr-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   padding: 8px;
   border-radius: 8px;
@@ -482,6 +513,13 @@ const CSS = `
 
 .sp-mgr-item-info {
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sp-mgr-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -577,6 +615,14 @@ const CSS = `
   background: var(--comfy-input-bg, #2a2a2e);
   color: var(--input-text, #ddd);
   box-sizing: border-box;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sp-preset-item:hover {
+  filter: brightness(1.12);
+  border-color: #6d5aa8;
 }
 
 .sp-preset-head {

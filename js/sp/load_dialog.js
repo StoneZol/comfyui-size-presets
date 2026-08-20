@@ -1,14 +1,15 @@
-import { CHEVRON_ICON_SVG, EDIT_ICON_SVG, LOAD_ICON_SVG } from "./icons.js";
+import { CHEVRON_ICON_SVG } from "./icons.js";
 import { formatSize, listSizePresets } from "./api.js";
 import { makeAspectPreview } from "./styles.js";
-import { openInputPopup, openPopup } from "./popup.js";
-import { renameCategory } from "./api.js";
+import { openPopup } from "./popup.js";
 
 const UNCATEGORISED = "Uncategorised";
 
 function makePresetCard(preset, { onLoad }) {
-  const card = document.createElement("div");
+  const card = document.createElement("button");
+  card.type = "button";
   card.className = "sp-preset-item";
+  card.title = `Load ${formatSize(preset.width, preset.height)}`;
 
   const head = document.createElement("div");
   head.className = "sp-preset-head";
@@ -19,21 +20,11 @@ function makePresetCard(preset, { onLoad }) {
   name.className = "sp-preset-name";
   name.textContent = formatSize(preset.width, preset.height);
 
-  const loadBtn = document.createElement("button");
-  loadBtn.type = "button";
-  loadBtn.className = "sp-preset-load";
-  loadBtn.title = "Load";
-  loadBtn.innerHTML = LOAD_ICON_SVG;
-  loadBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    onLoad?.(preset);
-  });
-
-  head.append(name, loadBtn);
+  head.appendChild(name);
   card.appendChild(head);
 
   card.addEventListener("click", (e) => {
-    if (e.target.closest("button")) return;
+    e.stopPropagation();
     onLoad?.(preset);
   });
 
@@ -57,17 +48,14 @@ function groupPresets(presets) {
   return { uncategorised, named, folders };
 }
 
-function makeFolder({ title, presets, expanded, onLoad, onRenameCategory }) {
+function makeFolder({ title, presets, expanded, onLoad }) {
   const folder = document.createElement("div");
   folder.className = "sp-preset-folder";
   if (!expanded) folder.classList.add("collapsed");
 
-  const head = document.createElement("div");
-  head.className = "sp-preset-folder-head sp-mgr-folder-head";
-
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "sp-mgr-folder-toggle";
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "sp-preset-folder-head";
 
   const chevron = document.createElement("span");
   chevron.className = "sp-preset-folder-chevron";
@@ -81,25 +69,9 @@ function makeFolder({ title, presets, expanded, onLoad, onRenameCategory }) {
   count.className = "sp-preset-folder-count";
   count.textContent = String(presets.length);
 
-  toggle.append(chevron, label, count);
-
-  const actions = document.createElement("div");
-  actions.className = "sp-mgr-folder-actions";
-
-  if (title.toLowerCase() !== UNCATEGORISED.toLowerCase()) {
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "sp-mgr-icon-btn";
-    renameBtn.title = "Rename category";
-    renameBtn.innerHTML = EDIT_ICON_SVG;
-    renameBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onRenameCategory?.(title, renameBtn);
-    });
-    actions.appendChild(renameBtn);
-  }
-
-  head.append(toggle, actions);
+  head.append(chevron, label, count);
+  head.title = expanded ? "Collapse folder" : "Expand folder";
+  head.setAttribute("aria-expanded", expanded ? "true" : "false");
 
   const body = document.createElement("div");
   body.className = "sp-preset-folder-body";
@@ -107,11 +79,11 @@ function makeFolder({ title, presets, expanded, onLoad, onRenameCategory }) {
     body.appendChild(makePresetCard(preset, { onLoad }));
   }
 
-  toggle.addEventListener("click", (e) => {
+  head.addEventListener("click", (e) => {
     e.stopPropagation();
     const collapsed = folder.classList.toggle("collapsed");
-    toggle.title = collapsed ? "Expand" : "Collapse";
-    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    head.title = collapsed ? "Expand folder" : "Collapse folder";
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
   });
 
   folder.append(head, body);
@@ -131,7 +103,7 @@ function matchesPreset(preset, query) {
   return haystack.includes(query);
 }
 
-function paintPresetList(list, presets, query, onLoad, refresh) {
+function paintPresetList(list, presets, query, onLoad) {
   const q = (query || "").trim().toLowerCase();
   const matched = presets.filter((preset) => matchesPreset(preset, q));
   list.replaceChildren();
@@ -146,23 +118,6 @@ function paintPresetList(list, presets, query, onLoad, refresh) {
   const grouped = groupPresets(matched);
   const searching = Boolean(q);
 
-  function renameCategoryHandler(categoryName, anchor) {
-    openInputPopup({
-      nested: true,
-      anchor,
-      title: "Rename category",
-      placeholder: "category name",
-      initialValue: categoryName,
-      confirmLabel: "Rename",
-      validate: (value) => (!value.trim() ? "Name is required" : ""),
-      onSubmit: async (value) => {
-        const result = await renameCategory({ name: categoryName, newName: value.trim() });
-        if (!result.ok) return;
-        refresh?.();
-      },
-    });
-  }
-
   if (grouped.uncategorised.length) {
     list.appendChild(
       makeFolder({
@@ -170,7 +125,6 @@ function paintPresetList(list, presets, query, onLoad, refresh) {
         presets: grouped.uncategorised,
         expanded: true,
         onLoad,
-        onRenameCategory: renameCategoryHandler,
       }),
     );
   }
@@ -181,7 +135,6 @@ function paintPresetList(list, presets, query, onLoad, refresh) {
         presets: grouped.folders.get(name) || [],
         expanded: searching,
         onLoad,
-        onRenameCategory: renameCategoryHandler,
       }),
     );
   }
@@ -226,21 +179,12 @@ export function openLoadPresetPopup({ anchor, onPick }) {
             onPick?.(picked);
           };
 
-          async function refresh() {
-            const next = await listSizePresets();
-            if (!next.ok) return;
-            presets.length = 0;
-            presets.push(...(next.presets || []));
-            paintPresetList(list, presets, search.value, onLoad, refresh);
-            reposition?.();
-          }
-
           search.addEventListener("input", () => {
-            paintPresetList(list, presets, search.value, onLoad, refresh);
+            paintPresetList(list, presets, search.value, onLoad);
             reposition?.();
           });
 
-          paintPresetList(list, presets, "", onLoad, refresh);
+          paintPresetList(list, presets, "", onLoad);
           body.append(search, list);
           reposition?.();
           requestAnimationFrame(() => search.focus());

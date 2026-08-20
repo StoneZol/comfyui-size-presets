@@ -1,4 +1,4 @@
-import { CHEVRON_ICON_SVG, EDIT_ICON_SVG, TRASH_ICON_SVG } from "./icons.js";
+import { CHEVRON_ICON_SVG, COPY_ICON_SVG, EDIT_ICON_SVG, MOVE_ICON_SVG, SWAP_ICON_SVG, TRASH_ICON_SVG } from "./icons.js";
 import { openConfirmPopup, openInputPopup, openPopup } from "./popup.js";
 import {
   categoryNames,
@@ -8,10 +8,28 @@ import {
   listCategories,
   listSizePresets,
   renameCategory,
+  saveSizePreset,
   updateSizePreset,
 } from "./api.js";
+import { makeAspectPreview } from "./styles.js";
 
 const UNCATEGORISED = "Uncategorised";
+
+function categoryKey(preset) {
+  return (preset.category || "").trim().toLowerCase() || UNCATEGORISED.toLowerCase();
+}
+
+/** True if square, or inverted W×H already exists in the same category. */
+function hasInvertedPair(preset, allPresets) {
+  if (preset.width === preset.height) return true;
+  const cat = categoryKey(preset);
+  return allPresets.some(
+    (p) =>
+      categoryKey(p) === cat &&
+      p.width === preset.height &&
+      p.height === preset.width,
+  );
+}
 
 function mgrConfirm(opts) {
   return openConfirmPopup({ nested: true, ...opts });
@@ -50,11 +68,27 @@ function makeIconBtn(className, title, svg, onClick) {
   return btn;
 }
 
-function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
+function makeSizeField(labelText, value) {
+  const row = document.createElement("div");
+  row.className = "sp-size-row";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.className = "sp-popup-input";
+  input.type = "number";
+  input.min = "64";
+  input.max = "8192";
+  input.step = "8";
+  input.value = String(value);
+  row.append(label, input);
+  return { row, input };
+}
+
+function openCategoryPicker({ anchor, title = "Category", categories, current, onPick, onClose }) {
   return openPopup({
     nested: true,
     anchor,
-    title: "Move to category",
+    title,
     width: 260,
     onClose,
     render(body, { close }) {
@@ -92,6 +126,105 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
       paint();
       body.append(filter, list);
       requestAnimationFrame(() => filter.focus());
+    },
+  });
+}
+
+function openEditSizePopup({ anchor, preset, onSaved }) {
+  return openPopup({
+    nested: true,
+    anchor,
+    title: "Edit size",
+    width: 300,
+    render(body, { close }) {
+      const widthField = makeSizeField("Width", preset.width);
+      const heightField = makeSizeField("Height", preset.height);
+      const preview = makeAspectPreview(preset.width, preset.height);
+
+      function updatePreview() {
+        const box = preview.querySelector(".sp-aspect-box");
+        const w = Math.max(1, Number(widthField.input.value) || 1);
+        const h = Math.max(1, Number(heightField.input.value) || 1);
+        const scale = 32 / Math.max(w, h);
+        box.style.width = `${Math.max(4, Math.round(w * scale))}px`;
+        box.style.height = `${Math.max(4, Math.round(h * scale))}px`;
+      }
+
+      widthField.input.addEventListener("input", updatePreview);
+      heightField.input.addEventListener("input", updatePreview);
+
+      const previewRow = document.createElement("div");
+      previewRow.className = "sp-size-row";
+      previewRow.append(
+        Object.assign(document.createElement("label"), { textContent: "Preview" }),
+        preview,
+      );
+
+      const errorEl = document.createElement("div");
+      errorEl.className = "sp-popup-error";
+
+      const actions = document.createElement("div");
+      actions.className = "sp-popup-actions";
+
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.className = "sp-popup-btn primary";
+      confirm.textContent = "Save";
+
+      async function submit() {
+        const w = parseInt(widthField.input.value, 10);
+        const h = parseInt(heightField.input.value, 10);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w < 64 || h < 64) {
+          errorEl.textContent = "Enter valid width and height (min 64)";
+          return;
+        }
+        if (w === preset.width && h === preset.height) {
+          close();
+          return;
+        }
+        confirm.disabled = true;
+        try {
+          const result = await updateSizePreset({
+            id: preset.id,
+            width: w,
+            height: h,
+          });
+          if (result.conflicts?.length) {
+            errorEl.textContent = `${formatSize(w, h)} already exists in this category`;
+            return;
+          }
+          if (!result.ok) {
+            errorEl.textContent = result.error || "Save failed";
+            return;
+          }
+          close();
+          onSaved?.();
+        } catch (err) {
+          errorEl.textContent = err?.message || "Save failed";
+        } finally {
+          confirm.disabled = false;
+        }
+      }
+
+      confirm.addEventListener("click", (e) => {
+        e.stopPropagation();
+        submit();
+      });
+      for (const input of [widthField.input, heightField.input]) {
+        input.addEventListener("input", () => {
+          if (errorEl.textContent) errorEl.textContent = "";
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        });
+      }
+
+      actions.appendChild(confirm);
+      body.append(widthField.row, heightField.row, previewRow, errorEl, actions);
+      requestAnimationFrame(() => widthField.input.focus());
     },
   });
 }
@@ -167,25 +300,42 @@ function folderExpanded(name, { query, openMap }) {
   return false;
 }
 
-function makeItemRow(preset, { onMove, onDelete }) {
+function makeItemRow(preset, { onEdit, onCopy, onMove, onClone, onDelete }) {
   const row = document.createElement("div");
   row.className = "sp-mgr-item";
 
   const info = document.createElement("div");
   info.className = "sp-mgr-item-info";
 
+  const titleRow = document.createElement("div");
+  titleRow.className = "sp-mgr-item-title";
+  titleRow.appendChild(makeAspectPreview(preset.width, preset.height));
+
   const titleEl = document.createElement("div");
   titleEl.className = "sp-mgr-item-name";
   titleEl.textContent = formatSize(preset.width, preset.height);
+  titleRow.appendChild(titleEl);
 
-  info.appendChild(titleEl);
+  info.appendChild(titleRow);
 
   const actions = document.createElement("div");
   actions.className = "sp-mgr-item-actions";
   actions.append(
-    makeIconBtn("sp-mgr-icon-btn", "Move", EDIT_ICON_SVG, onMove),
-    makeIconBtn("sp-mgr-icon-btn danger", "Delete", TRASH_ICON_SVG, onDelete),
+    makeIconBtn("sp-mgr-icon-btn", "Edit size", EDIT_ICON_SVG, onEdit),
+    makeIconBtn("sp-mgr-icon-btn", "Copy to category", COPY_ICON_SVG, onCopy),
+    makeIconBtn("sp-mgr-icon-btn", "Move to category", MOVE_ICON_SVG, onMove),
   );
+  if (onClone) {
+    actions.append(
+      makeIconBtn(
+        "sp-mgr-icon-btn",
+        `Clone inverted ${formatSize(preset.height, preset.width)}`,
+        SWAP_ICON_SVG,
+        onClone,
+      ),
+    );
+  }
+  actions.append(makeIconBtn("sp-mgr-icon-btn danger", "Delete", TRASH_ICON_SVG, onDelete));
 
   row.append(info, actions);
   return row;
@@ -300,22 +450,110 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
         },
         renderItem: (preset) =>
           makeItemRow(preset, {
-            onMove: (btn) => {
-              let picker = null;
-              picker = openCategoryPicker({
+            onEdit: (btn) => {
+              openEditSizePopup({
                 anchor: btn,
+                preset,
+                onSaved: reload,
+              });
+            },
+            onCopy: (btn) => {
+              openCategoryPicker({
+                anchor: btn,
+                title: "Copy to category",
                 categories: categoryNamesList,
                 current: preset.category || "",
                 onPick: async (name) => {
-                  const result = await updateSizePreset({
-                    id: preset.id,
+                  const targetLabel = (name || "").trim() || UNCATEGORISED;
+                  const currentLabel = (preset.category || "").trim() || UNCATEGORISED;
+                  if (targetLabel.toLowerCase() === currentLabel.toLowerCase()) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Copy to category",
+                      message: "Already in this category.",
+                      confirmLabel: "OK",
+                      showCancel: false,
+                      danger: false,
+                    });
+                    return;
+                  }
+
+                  const result = await saveSizePreset({
                     category: name,
-                    overwrite: true,
+                    width: preset.width,
+                    height: preset.height,
                   });
+                  if (result.conflicts?.length) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Copy to category",
+                      message: `${formatSize(preset.width, preset.height)} already exists in “${targetLabel}”. Nothing to copy.`,
+                      confirmLabel: "OK",
+                      showCancel: false,
+                      danger: false,
+                    });
+                    return;
+                  }
                   if (!result.ok) {
                     mgrConfirm({
                       anchor: btn,
-                      title: "Move preset",
+                      title: "Copy to category",
+                      message: result.error || "Copy failed",
+                      confirmLabel: "OK",
+                      showCancel: false,
+                      danger: false,
+                    });
+                    return;
+                  }
+                  reload();
+                },
+              });
+            },
+            onMove: (btn) => {
+              openCategoryPicker({
+                anchor: btn,
+                title: "Move to category",
+                categories: categoryNamesList,
+                current: preset.category || "",
+                onPick: async (name) => {
+                  const targetLabel = (name || "").trim() || UNCATEGORISED;
+                  const currentLabel = (preset.category || "").trim() || UNCATEGORISED;
+                  if (targetLabel.toLowerCase() === currentLabel.toLowerCase()) return;
+
+                  const result = await updateSizePreset({
+                    id: preset.id,
+                    category: name,
+                  });
+                  if (result.conflicts?.length) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Move to category",
+                      message: `${formatSize(preset.width, preset.height)} already exists in “${targetLabel}”. Remove it from “${currentLabel}”?`,
+                      confirmLabel: "Remove",
+                      cancelLabel: "Cancel",
+                      danger: true,
+                      onConfirm: async () => {
+                        const deleted = await deleteSizePreset(preset.id);
+                        if (!deleted.ok) {
+                          mgrConfirm({
+                            anchor: btn,
+                            title: "Move to category",
+                            message: deleted.error || "Delete failed",
+                            confirmLabel: "OK",
+                            showCancel: false,
+                            danger: false,
+                          });
+                          return;
+                        }
+                        reload();
+                      },
+                    });
+                    return;
+                  }
+                  if (!result.ok) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Move to category",
                       message: result.error || "Move failed",
                       confirmLabel: "OK",
                       showCancel: false,
@@ -325,11 +563,29 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
                   }
                   reload();
                 },
-                onClose: () => {
-                  picker = null;
-                },
               });
             },
+            onClone: hasInvertedPair(preset, presets)
+              ? null
+              : async (btn) => {
+                  const result = await saveSizePreset({
+                    category: preset.category || "",
+                    width: preset.height,
+                    height: preset.width,
+                  });
+                  if (!result.ok) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Clone size",
+                      message: result.error || "Clone failed",
+                      confirmLabel: "OK",
+                      showCancel: false,
+                      danger: false,
+                    });
+                    return;
+                  }
+                  reload();
+                },
             onDelete: (btn) => {
               mgrConfirm({
                 anchor: btn,
@@ -364,7 +620,7 @@ export function openManagerPopup({ anchor }) {
   return openPopup({
     anchor,
     title: "Size manager",
-    width: 360,
+    width: 380,
     render(body) {
       const search = document.createElement("input");
       search.className = "sp-popup-input";
