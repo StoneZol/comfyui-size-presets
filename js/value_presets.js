@@ -4,10 +4,13 @@ import { GEAR_ICON_SVG, LOAD_ICON_SVG, PLUS_ICON_SVG, SAVE_ICON_SVG } from "./sp
 import {
   clampValue,
   defaultField,
+  dropItemById,
   fieldFromDef,
   fieldsJson,
   isolatePointer,
+  makeFieldOrderControls,
   MAX_FIELDS,
+  moveItemToIndex,
   normalizeField,
   parseFields,
   selectOnFocus,
@@ -16,6 +19,7 @@ import { openSaveValuePopup } from "./vp/save_dialog.js";
 import { openLoadValuePopup } from "./vp/load_dialog.js";
 import { openValueManagerPopup } from "./vp/manager_dialog.js";
 import { openFieldConfigPopup, openFieldLibraryPopup } from "./vp/field_config.js";
+import { getSearchInFields, setSearchInFields } from "./vp/prefs.js";
 import {
   createShadowNumber,
   hideDataWidget,
@@ -302,6 +306,27 @@ app.registerExtension({
           removeBtn.textContent = "×";
           removeBtn.disabled = fields.length <= 1;
 
+          const order = makeFieldOrderControls({
+            index,
+            id: field.id,
+            onReorder: (fromId, toIndex) => {
+              const from = fields.findIndex((item) => item.id === fromId);
+              if (from < 0) return;
+              fields = moveItemToIndex(fields, from, toIndex);
+              persist();
+              rebuildShadows();
+              syncOutputs();
+              paint();
+            },
+            onDrop: (fromId, toId, after) => {
+              fields = dropItemById(fields, fromId, toId, after);
+              persist();
+              rebuildShadows();
+              syncOutputs();
+              paint();
+            },
+          });
+
           nameInput.addEventListener("change", () => {
             field.name =
               nameInput.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
@@ -358,7 +383,8 @@ app.registerExtension({
             paint();
           });
 
-          row.append(nameInput, typeBtn, valueInput, configBtn, removeBtn);
+          row.append(order.dragHandle, order.pos, nameInput, typeBtn, valueInput, configBtn, removeBtn);
+          order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
         addBtn.disabled = fields.length >= MAX_FIELDS;
@@ -380,6 +406,8 @@ app.registerExtension({
         e.stopPropagation();
         openLoadValuePopup({
           anchor: loadBtn,
+          searchInFields: getSearchInFields(node),
+          onSearchInFieldsChange: (value) => setSearchInFields(node, value),
           onPick: (preset) => applyFields(parseFields(preset.fields), { rebuild: true }),
         });
       });
@@ -393,7 +421,11 @@ app.registerExtension({
 
       managerBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        openValueManagerPopup({ anchor: managerBtn });
+        openValueManagerPopup({
+          anchor: managerBtn,
+          searchInFields: getSearchInFields(node),
+          onSearchInFieldsChange: (value) => setSearchInFields(node, value),
+        });
       });
 
       const onResize = node.onResize;

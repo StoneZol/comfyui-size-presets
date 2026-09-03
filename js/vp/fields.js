@@ -1,3 +1,5 @@
+import { GRIP_ICON_SVG } from "../sp/icons.js";
+
 export const MAX_FIELDS = 16;
 export const DEFAULT_MIN = 0;
 export const DEFAULT_MAX = 1_000_000_000;
@@ -163,6 +165,164 @@ export function formatFields(fields) {
 export function fieldCountLabel(fields) {
   const n = (fields || []).length;
   return n === 1 ? "1 field" : `${n} fields`;
+}
+
+/** Short notes line for cards (≈20–40 chars). */
+export function notesPreview(notes, max = 36) {
+  const text = String(notes || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+/** Next free library name for a copy: denoise → denoise_2. */
+export function uniqueCopyName(base, existingNames = []) {
+  const root = String(base || "field").trim() || "field";
+  const used = new Set(
+    (existingNames || []).map((n) => String(n || "").trim().toLowerCase()).filter(Boolean),
+  );
+  if (!used.has(root.toLowerCase())) return root;
+  let i = 2;
+  while (used.has(`${root}_${i}`.toLowerCase())) i += 1;
+  return `${root}_${i}`;
+}
+
+/** Swap item at index with neighbor (delta -1 / +1). Returns new array. */
+export function moveItem(list, index, delta) {
+  return moveItemToIndex(list, index, index + delta);
+}
+
+/** Move item from fromIndex to toIndex. Returns new array. */
+export function moveItemToIndex(list, fromIndex, toIndex) {
+  const items = [...(list || [])];
+  if (fromIndex < 0 || fromIndex >= items.length) return items;
+  const next = Math.max(0, Math.min(items.length - 1, toIndex));
+  if (fromIndex === next) return items;
+  const [moved] = items.splice(fromIndex, 1);
+  items.splice(next, 0, moved);
+  return items;
+}
+
+/**
+ * Drop helper matching prompt-craft: insert before/after target by id.
+ * ids are string field ids.
+ */
+export function dropItemById(list, fromId, toId, after) {
+  const items = [...(list || [])];
+  const from = items.findIndex((item) => String(item?.id) === String(fromId));
+  let to = items.findIndex((item) => String(item?.id) === String(toId));
+  if (from < 0 || to < 0) return items;
+  if (after) to += 1;
+  if (from < to) to -= 1;
+  return moveItemToIndex(items, from, to);
+}
+
+/** Grip handle + 1-based position input (prompt-craft style). */
+export function makeFieldOrderControls({ index, id, onReorder, onDrop }) {
+  const dragHandle = document.createElement("div");
+  dragHandle.className = "vp-drag-handle";
+  dragHandle.title = "Drag to reorder";
+  dragHandle.innerHTML = GRIP_ICON_SVG;
+  dragHandle.draggable = true;
+  dragHandle.addEventListener("pointerdown", (e) => e.stopPropagation());
+  dragHandle.addEventListener("mousedown", (e) => e.stopPropagation());
+  dragHandle.addEventListener("dragstart", (e) => {
+    e.stopPropagation();
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(id));
+    dragHandle.closest(".vp-field-row")?.classList.add("dragging");
+  });
+  dragHandle.addEventListener("dragend", () => {
+    const row = dragHandle.closest(".vp-field-row");
+    row?.classList.remove("dragging");
+    row?.parentElement?.querySelectorAll(".vp-field-row").forEach((el) => {
+      el.classList.remove("drop-above", "drop-below");
+    });
+  });
+
+  const pos = document.createElement("input");
+  pos.className = "vp-field-pos";
+  pos.type = "number";
+  pos.min = "1";
+  pos.step = "1";
+  pos.title = "Position";
+  pos.value = String(index + 1);
+  isolatePointer(pos);
+  selectOnFocus(pos);
+
+  function commitPos() {
+    const parsed = parseInt(pos.value, 10);
+    if (Number.isNaN(parsed)) {
+      pos.value = String(index + 1);
+      return;
+    }
+    onReorder?.(String(id), parsed - 1);
+  }
+
+  pos.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      pos.blur();
+    }
+    if (e.key === "Escape") {
+      pos.value = String(index + 1);
+      pos.blur();
+    }
+  });
+  pos.addEventListener("blur", commitPos);
+
+  return { dragHandle, pos, wireRowDrop };
+
+  function wireRowDrop(row) {
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = row.getBoundingClientRect();
+      const above = e.clientY < rect.top + rect.height / 2;
+      row.classList.toggle("drop-above", above);
+      row.classList.toggle("drop-below", !above);
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-above", "drop-below");
+    });
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove("drop-above", "drop-below");
+      const fromId = e.dataTransfer.getData("text/plain");
+      if (!fromId || fromId === String(id)) return;
+      const rect = row.getBoundingClientRect();
+      const after = e.clientY >= rect.top + rect.height / 2;
+      onDrop?.(fromId, String(id), after);
+    });
+  }
+}
+
+/** Strip trailing " (N)" so Flux (2) → Flux. */
+export function baseShelfName(title) {
+  return (title || "").trim().replace(/\s+\(\d+\)$/, "");
+}
+
+/** Next free name: Flux → Flux (2) → Flux (3). Keeps title if unused. */
+export function nextDuplicateName(names, title) {
+  const trimmed = (title || "").trim() || "Untitled";
+  const taken = new Set(
+    (names || []).map((name) => String(name || "").trim().toLowerCase()).filter(Boolean),
+  );
+  if (!taken.has(trimmed.toLowerCase())) return trimmed;
+  const base = baseShelfName(trimmed) || "Untitled";
+  let n = 2;
+  while (taken.has(`${base} (${n})`.toLowerCase())) n += 1;
+  return `${base} (${n})`;
+}
+
+/** Next free preset name inside a category (empty = Uncategorised). */
+export function nextPresetCopyName(presets, category, title) {
+  const target = (category || "").trim().toLowerCase();
+  const names = (presets || [])
+    .filter((preset) => (preset.category || "").trim().toLowerCase() === target)
+    .map((preset) => preset.name);
+  return nextDuplicateName(names, title);
 }
 
 export function presetTitle(preset) {

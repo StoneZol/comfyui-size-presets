@@ -11,6 +11,7 @@ import {
   saveSizePreset,
   updateSizePreset,
 } from "./api.js";
+import { emptyShelfMatchesSearch, matchesSizePreset, parseSearchQuery } from "./search.js";
 import { makeAspectPreview } from "./styles.js";
 
 const UNCATEGORISED = "Uncategorised";
@@ -330,7 +331,8 @@ function makeFolderSection({
 }
 
 function folderExpanded(name, { query, openMap }) {
-  if ((query || "").trim()) return true;
+  const { shelf, tokens, hasShelfFilter } = parseSearchQuery(query);
+  if (hasShelfFilter || tokens.length) return true;
   if (openMap?.has(name)) return openMap.get(name);
   return name === UNCATEGORISED;
 }
@@ -378,20 +380,19 @@ function makeItemRow(preset, { onEdit, onCopy, onMove, onClone, onDelete }) {
 
 function paintManagerList(listEl, { presets, categories, showEmpty, query, openMap, reload }) {
   listEl.replaceChildren();
-  const q = query.trim().toLowerCase();
+  const raw = query || "";
+  const { shelf, tokens, hasShelfFilter } = parseSearchQuery(raw);
+  const searching = hasShelfFilter || tokens.length > 0;
 
-  const filtered = presets.filter((preset) => {
-    const haystack = [preset.category, String(preset.width), String(preset.height), formatSize(preset.width, preset.height)]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(q);
-  });
+  const filtered = presets.filter((preset) =>
+    matchesSizePreset(preset, raw, { emptyFolder: UNCATEGORISED }),
+  );
 
   const grouped = groupByCategory(filtered);
   if (showEmpty) {
     for (const category of categories) {
       if ((category.count || 0) === 0 && !grouped.has(category.name)) {
-        grouped.set(category.name, []);
+        if (emptyShelfMatchesSearch(category.name, raw)) grouped.set(category.name, []);
       }
     }
   }
@@ -413,7 +414,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
   if (!names.length) {
     const empty = document.createElement("div");
     empty.className = "sp-popup-message";
-    empty.textContent = q ? "No presets" : "No saved presets yet.";
+    empty.textContent = searching ? "No presets" : "No saved presets yet.";
     listEl.appendChild(empty);
     return;
   }
@@ -426,7 +427,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
       makeFolderSection({
         title: folderName,
         items,
-        expanded: folderExpanded(folderName, { query: q, openMap }),
+        expanded: folderExpanded(folderName, { query: raw, openMap }),
         canManageFolder: folderName.toLowerCase() !== UNCATEGORISED.toLowerCase(),
         onToggleExpand: (open) => openMap?.set(folderName, open),
         onRenameFolder: (btn) => {
@@ -660,7 +661,7 @@ export function openManagerPopup({ anchor }) {
       const search = document.createElement("input");
       search.className = "sp-popup-input";
       search.type = "text";
-      search.placeholder = "search sizes";
+      search.placeholder = "category/size or 1024";
 
       const emptyRow = document.createElement("div");
       emptyRow.className = "sp-toggle-row";

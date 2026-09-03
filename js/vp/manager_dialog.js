@@ -18,19 +18,26 @@ import {
 import {
   clampValue,
   defaultField,
+  dropItemById,
   fieldCountLabel,
   fieldFromDef,
   formatFieldRange,
   formatFields,
   isolatePointer,
   makeFieldChips,
+  makeFieldOrderControls,
   MAX_FIELDS,
+  moveItemToIndex,
   normalizeField,
+  nextPresetCopyName,
+  notesPreview,
   presetTitle,
   selectOnFocus,
+  uniqueCopyName,
 } from "./fields.js";
 import { openFieldConfigPopup, openFieldDefEditor, openFieldLibraryPopup } from "./field_config.js";
-
+import { emptyShelfMatchesSearch, matchesValueField, matchesValuePreset, parseSearchQuery } from "../sp/search.js";
+import { presetSearchPlaceholder } from "./prefs.js";
 const UNCATEGORISED = "Uncategorised";
 
 function mgrConfirm(opts) {
@@ -230,6 +237,23 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           removeBtn.textContent = "×";
           removeBtn.disabled = fields.length <= 1;
 
+          const order = makeFieldOrderControls({
+            index,
+            id: field.id,
+            onReorder: (fromId, toIndex) => {
+              const from = fields.findIndex((item) => item.id === fromId);
+              if (from < 0) return;
+              fields = moveItemToIndex(fields, from, toIndex);
+              paintFields();
+              reposition?.();
+            },
+            onDrop: (fromId, toId, after) => {
+              fields = dropItemById(fields, fromId, toId, after);
+              paintFields();
+              reposition?.();
+            },
+          });
+
           fieldName.addEventListener("change", () => {
             fields[index].name =
               fieldName.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
@@ -272,7 +296,8 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
             reposition?.();
           });
 
-          row.append(fieldName, typeBtn, valueInput, configBtn, removeBtn);
+          row.append(order.dragHandle, order.pos, fieldName, typeBtn, valueInput, configBtn, removeBtn);
+          order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
         addBtn.disabled = fields.length >= MAX_FIELDS;
@@ -412,7 +437,8 @@ function makeFolderSection({ title, items, expanded, canManageFolder, onRenameFo
 }
 
 function folderExpanded(name, { query, openMap }) {
-  if ((query || "").trim()) return true;
+  const { shelf, tokens, hasShelfFilter } = parseSearchQuery(query);
+  if (hasShelfFilter || tokens.length) return true;
   if (openMap?.has(name)) return openMap.get(name);
   return name === UNCATEGORISED;
 }
@@ -466,6 +492,14 @@ function makeItemRow(preset, { onEdit, onCopy, onMove, onDelete }) {
   meta.className = "sp-mgr-item-meta";
   meta.textContent = fieldCountLabel(preset.fields);
   info.append(titleRow, meta);
+  const preview = notesPreview(preset.notes);
+  if (preview) {
+    const notes = document.createElement("div");
+    notes.className = "sp-mgr-item-meta";
+    notes.textContent = preview;
+    notes.title = String(preset.notes || "").trim();
+    info.appendChild(notes);
+  }
 
   const actions = document.createElement("div");
   actions.className = "sp-mgr-item-actions";
@@ -474,7 +508,7 @@ function makeItemRow(preset, { onEdit, onCopy, onMove, onDelete }) {
       openPresetInfoPopup({ anchor: btn, preset });
     }),
     makeIconBtn("sp-mgr-icon-btn", "Edit preset", EDIT_ICON_SVG, onEdit),
-    makeIconBtn("sp-mgr-icon-btn", "Copy to category", COPY_ICON_SVG, onCopy),
+    makeIconBtn("sp-mgr-icon-btn", "Copy preset", COPY_ICON_SVG, onCopy),
     makeIconBtn("sp-mgr-icon-btn", "Move to category", MOVE_ICON_SVG, onMove),
     makeIconBtn("sp-mgr-icon-btn danger", "Delete", TRASH_ICON_SVG, onDelete),
   );
@@ -482,20 +516,21 @@ function makeItemRow(preset, { onEdit, onCopy, onMove, onDelete }) {
   return row;
 }
 
-function paintManagerList(listEl, { presets, categories, showEmpty, query, openMap, reload }) {
+function paintManagerList(listEl, { presets, categories, showEmpty, query, openMap, reload, includeFields }) {
   listEl.replaceChildren();
-  const q = query.trim().toLowerCase();
-  const filtered = presets.filter((preset) => {
-    const haystack = [preset.name, preset.notes, preset.category, formatFields(preset.fields)]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(q);
-  });
+  const raw = query || "";
+  const { tokens, hasShelfFilter } = parseSearchQuery(raw);
+  const searching = hasShelfFilter || tokens.length > 0;
+  const filtered = presets.filter((preset) =>
+    matchesValuePreset(preset, raw, { emptyFolder: UNCATEGORISED, includeFields }),
+  );
 
   const grouped = groupByCategory(filtered);
   if (showEmpty) {
     for (const category of categories) {
-      if ((category.count || 0) === 0 && !grouped.has(category.name)) grouped.set(category.name, []);
+      if ((category.count || 0) === 0 && !grouped.has(category.name)) {
+        if (emptyShelfMatchesSearch(category.name, raw)) grouped.set(category.name, []);
+      }
     }
   }
 
@@ -516,7 +551,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
   if (!names.length) {
     const empty = document.createElement("div");
     empty.className = "sp-popup-message";
-    empty.textContent = q ? "No presets" : "No saved presets yet.";
+    empty.textContent = searching ? "No presets" : "No saved presets yet.";
     listEl.appendChild(empty);
     return;
   }
@@ -529,7 +564,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
       makeFolderSection({
         title: folderName,
         items,
-        expanded: folderExpanded(folderName, { query: q, openMap }),
+        expanded: folderExpanded(folderName, { query: raw, openMap }),
         canManageFolder: folderName.toLowerCase() !== UNCATEGORISED.toLowerCase(),
         onToggleExpand: (open) => openMap?.set(folderName, open),
         onRenameFolder: (btn) => {
@@ -592,34 +627,22 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
             onCopy: (btn) => {
               openCategoryPicker({
                 anchor: btn,
-                title: "Copy to category",
+                title: "Copy preset",
                 categories: categoryNamesList,
                 current: preset.category || "",
                 onPick: async (name) => {
-                  const targetLabel = (name || "").trim() || UNCATEGORISED;
-                  const currentLabel = (preset.category || "").trim() || UNCATEGORISED;
-                  if (targetLabel.toLowerCase() === currentLabel.toLowerCase()) {
-                    mgrConfirm({
-                      anchor: btn,
-                      title: "Copy to category",
-                      message: "Already in this category.",
-                      confirmLabel: "OK",
-                      showCancel: false,
-                      danger: false,
-                    });
-                    return;
-                  }
+                  const copyName = nextPresetCopyName(presets, name, preset.name || presetTitle(preset));
                   const result = await saveValuePreset({
                     category: name,
-                    name: preset.name,
+                    name: copyName,
                     notes: preset.notes || "",
                     fields: preset.fields,
                   });
                   if (result.conflicts?.length) {
                     mgrConfirm({
                       anchor: btn,
-                      title: "Copy to category",
-                      message: `“${presetTitle(preset)}” already exists in the target category.`,
+                      title: "Copy preset",
+                      message: `“${copyName}” already exists in the target category.`,
                       confirmLabel: "OK",
                       showCancel: false,
                       danger: false,
@@ -629,7 +652,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
                   if (!result.ok) {
                     mgrConfirm({
                       anchor: btn,
-                      title: "Copy to category",
+                      title: "Copy preset",
                       message: result.error || "Copy failed",
                       confirmLabel: "OK",
                       showCancel: false,
@@ -723,7 +746,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
   }
 }
 
-export function openValueManagerPopup({ anchor }) {
+export function openValueManagerPopup({ anchor, searchInFields = false, onSearchInFieldsChange }) {
   return openPopup({
     anchor,
     title: "Value manager",
@@ -744,7 +767,38 @@ export function openValueManagerPopup({ anchor }) {
       const search = document.createElement("input");
       search.className = "sp-popup-input";
       search.type = "text";
-      search.placeholder = "search presets";
+
+      let includeFields = !!searchInFields;
+      let tab = "presets";
+      search.placeholder = presetSearchPlaceholder(includeFields);
+
+      const fieldsSearchRow = document.createElement("div");
+      fieldsSearchRow.className = "sp-toggle-row";
+      const fieldsSearchToggle = document.createElement("div");
+      fieldsSearchToggle.className = "sp-toggle";
+      fieldsSearchToggle.setAttribute("role", "switch");
+      fieldsSearchToggle.appendChild(Object.assign(document.createElement("div"), { className: "sp-toggle-knob" }));
+      const fieldsSearchLabel = document.createElement("span");
+      fieldsSearchLabel.textContent = "Search in fields";
+      fieldsSearchRow.append(fieldsSearchToggle, fieldsSearchLabel);
+
+      function syncFieldsSearchToggle() {
+        fieldsSearchToggle.classList.toggle("on", includeFields);
+        fieldsSearchToggle.setAttribute("aria-checked", includeFields ? "true" : "false");
+        search.placeholder =
+          tab === "presets" ? presetSearchPlaceholder(includeFields) : "category/field or float";
+      }
+      syncFieldsSearchToggle();
+
+      function flipFieldsSearch(e) {
+        e.stopPropagation();
+        includeFields = !includeFields;
+        syncFieldsSearchToggle();
+        onSearchInFieldsChange?.(includeFields);
+        paint?.();
+      }
+      fieldsSearchToggle.addEventListener("click", flipFieldsSearch);
+      fieldsSearchLabel.addEventListener("click", flipFieldsSearch);
 
       const emptyRow = document.createElement("div");
       emptyRow.className = "sp-toggle-row";
@@ -768,9 +822,8 @@ export function openValueManagerPopup({ anchor }) {
       status.textContent = "Loading…";
       const list = document.createElement("div");
       list.className = "sp-preset-list sp-mgr-list";
-      body.append(tabs, search, emptyRow, addFieldBtn, status, list);
+      body.append(tabs, search, fieldsSearchRow, emptyRow, addFieldBtn, status, list);
 
-      let tab = "presets";
       let showEmpty = false;
       let presets = [];
       let categories = [];
@@ -784,8 +837,9 @@ export function openValueManagerPopup({ anchor }) {
         presetsTab.classList.toggle("active", tab === "presets");
         fieldsTab.classList.toggle("active", tab === "fields");
         emptyRow.style.display = "";
+        fieldsSearchRow.style.display = tab === "presets" ? "" : "none";
         addFieldBtn.style.display = tab === "fields" ? "" : "none";
-        search.placeholder = tab === "presets" ? "search presets" : "search fields";
+        syncFieldsSearchToggle();
         paint();
       }
 
@@ -798,6 +852,7 @@ export function openValueManagerPopup({ anchor }) {
             query: search.value,
             openMap,
             reload: loadAll,
+            includeFields,
           });
         } else {
           paintFieldsManagerList(list, {
@@ -875,13 +930,12 @@ export function openValueManagerPopup({ anchor }) {
 
 function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, openMap, reload }) {
   listEl.replaceChildren();
-  const q = (query || "").trim().toLowerCase();
-  const filtered = (fields || []).filter((field) => {
-    const hay = [field.name, field.category, field.notes, field.type, formatFieldRange(field)]
-      .join(" ")
-      .toLowerCase();
-    return !q || hay.includes(q);
-  });
+  const raw = query || "";
+  const { tokens, hasShelfFilter } = parseSearchQuery(raw);
+  const searching = hasShelfFilter || tokens.length > 0;
+  const filtered = (fields || []).filter((field) =>
+    matchesValueField(field, raw, { emptyFolder: UNCATEGORISED }),
+  );
 
   const grouped = new Map();
   for (const field of filtered) {
@@ -890,17 +944,21 @@ function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, 
     list.push(field);
     grouped.set(name, list);
   }
-  for (const category of categories || []) {
-    const name = (category.name || "").trim();
-    if (!name || grouped.has(name)) continue;
-    if (showEmpty || q) grouped.set(name, []);
+  if (showEmpty) {
+    for (const category of categories || []) {
+      const name = (category.name || "").trim();
+      if (!name || grouped.has(name)) continue;
+      if ((category.count || 0) === 0 && emptyShelfMatchesSearch(name, raw)) {
+        grouped.set(name, []);
+      }
+    }
   }
 
   const names = [...grouped.keys()]
     .filter((name) => {
       const items = grouped.get(name) || [];
       if (items.length) return true;
-      if (!showEmpty && !q) return false;
+      if (!showEmpty) return false;
       return name.toLowerCase() !== UNCATEGORISED.toLowerCase();
     })
     .sort((a, b) => {
@@ -913,19 +971,18 @@ function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, 
   if (!names.length) {
     const empty = document.createElement("div");
     empty.className = "sp-popup-message";
-    empty.textContent = q ? "No fields" : "No field definitions yet.";
+    empty.textContent = searching ? "No fields" : "No field definitions yet.";
     listEl.appendChild(empty);
     return;
   }
 
   for (const folderName of names) {
     const items = grouped.get(folderName) || [];
-    const expanded = q ? true : openMap?.has(folderName) ? openMap.get(folderName) : folderName === UNCATEGORISED;
     listEl.appendChild(
       makeFolderSection({
         title: folderName,
         items,
-        expanded,
+        expanded: folderExpanded(folderName, { query: raw, openMap }),
         canManageFolder: folderName.toLowerCase() !== UNCATEGORISED.toLowerCase(),
         onToggleExpand: (open) => openMap?.set(folderName, open),
         onRenameFolder: (btn) => {
@@ -997,7 +1054,9 @@ function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, 
           if (field.notes) {
             const notes = document.createElement("div");
             notes.className = "sp-mgr-item-meta";
-            notes.textContent = field.notes;
+            const preview = notesPreview(field.notes);
+            notes.textContent = preview;
+            notes.title = String(field.notes || "").trim();
             info.appendChild(notes);
           }
           const actions = document.createElement("div");
@@ -1007,6 +1066,31 @@ function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, 
               openFieldDefEditor({
                 anchor: btn,
                 field,
+                categories: categoryNames(categories),
+                onSaved: (saved) => {
+                  const cat = (saved?.category || "").trim() || UNCATEGORISED;
+                  openMap?.set(cat, true);
+                  reload();
+                },
+              });
+            }),
+            makeIconBtn("sp-mgr-icon-btn", "Copy field", COPY_ICON_SVG, (btn) => {
+              openFieldDefEditor({
+                anchor: btn,
+                title: "Copy field",
+                field: {
+                  name: uniqueCopyName(
+                    field.name,
+                    (fields || []).map((item) => item.name),
+                  ),
+                  type: field.type,
+                  min: field.min,
+                  max: field.max,
+                  step: field.step,
+                  default: field.default ?? field.value ?? 0,
+                  category: "",
+                  notes: field.notes || "",
+                },
                 categories: categoryNames(categories),
                 onSaved: (saved) => {
                   const cat = (saved?.category || "").trim() || UNCATEGORISED;

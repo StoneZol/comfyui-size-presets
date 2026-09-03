@@ -217,6 +217,69 @@ const CSS = `
   padding: 0;
 }
 
+.vp-drag-handle {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  cursor: grab;
+  user-select: none;
+}
+
+.vp-drag-handle:active {
+  cursor: grabbing;
+}
+
+.vp-drag-handle svg {
+  width: 10px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.vp-field-pos {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  background: var(--comfy-input-bg, #1c1c1f);
+  color: #999;
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vp-field-pos:focus {
+  border-color: #6d5aa8;
+  color: var(--input-text, #ddd);
+}
+
+.vp-field-pos::-webkit-outer-spin-button,
+.vp-field-pos::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.vp-field-row.dragging {
+  opacity: 0.4;
+}
+
+.vp-field-row.drop-above {
+  box-shadow: inset 0 2px 0 #a78bfa;
+}
+
+.vp-field-row.drop-below {
+  box-shadow: inset 0 -2px 0 #a78bfa;
+}
+
 .vp-field-config {
   flex: 0 0 28px;
   width: 28px;

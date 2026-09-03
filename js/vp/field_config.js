@@ -1,4 +1,6 @@
+import { CHEVRON_ICON_SVG } from "../sp/icons.js";
 import { openPopup } from "../sp/popup.js";
+import { matchesValueField, parseSearchQuery } from "../sp/search.js";
 import {
   listValueFieldCategories,
   listValueFieldDefs,
@@ -356,12 +358,12 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
 }
 
 /** Full editor for a library field definition (manager Fields tab). */
-export function openFieldDefEditor({ anchor, field = null, categories = [], onSaved }) {
+export function openFieldDefEditor({ anchor, field = null, categories = [], onSaved, title }) {
   const editing = Boolean(field?.id);
   return openPopup({
     nested: true,
     anchor,
-    title: editing ? "Edit field" : "New field",
+    title: title || (editing ? "Edit field" : "New field"),
     width: 320,
     render(body, { close }) {
       const nameRow = makeTextRow("Name", field?.name || "", { placeholder: "denoise" });
@@ -473,7 +475,7 @@ export function openFieldLibraryPopup({ anchor, onPick, onBlank }) {
     nested: true,
     anchor,
     title: "Add field",
-    width: 320,
+    width: 340,
     render(body, { close, reposition }) {
       const blank = document.createElement("button");
       blank.type = "button";
@@ -488,10 +490,10 @@ export function openFieldLibraryPopup({ anchor, onPick, onBlank }) {
       const filter = document.createElement("input");
       filter.className = "sp-popup-input";
       filter.type = "text";
-      filter.placeholder = "search name / category / notes";
+      filter.placeholder = "category/field or float";
 
       const list = document.createElement("div");
-      list.className = "sp-pick-list";
+      list.className = "sp-preset-list";
 
       const status = document.createElement("div");
       status.className = "sp-popup-message";
@@ -500,33 +502,40 @@ export function openFieldLibraryPopup({ anchor, onPick, onBlank }) {
       body.append(blank, filter, status, list);
 
       let defs = [];
+      const openMap = new Map();
 
-      function paint() {
-        const q = filter.value.trim().toLowerCase();
-        list.replaceChildren();
-        const shown = defs.filter((item) => {
-          const hay = `${item.name} ${item.type} ${item.category || ""} ${item.notes || ""}`.toLowerCase();
-          return !q || hay.includes(q);
-        });
-        if (!shown.length) {
-          const empty = document.createElement("div");
-          empty.className = "sp-popup-message";
-          empty.textContent = defs.length
-            ? "No matches"
-            : "Library empty — gear → Save to library, or manage in Fields tab";
-          list.appendChild(empty);
-          return;
-        }
-        for (const item of shown) {
+      function makePickFolder(title, items, expanded) {
+        const folder = document.createElement("div");
+        folder.className = "sp-preset-folder";
+        if (!expanded) folder.classList.add("collapsed");
+
+        const head = document.createElement("button");
+        head.type = "button";
+        head.className = "sp-preset-folder-head";
+        const chevron = document.createElement("span");
+        chevron.className = "sp-preset-folder-chevron";
+        chevron.innerHTML = CHEVRON_ICON_SVG;
+        const label = document.createElement("span");
+        label.className = "sp-preset-folder-name";
+        label.textContent = title;
+        const count = document.createElement("span");
+        count.className = "sp-preset-folder-count";
+        count.textContent = String(items.length);
+        head.append(chevron, label, count);
+        head.title = expanded ? "Collapse" : "Expand";
+        head.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+        const folderBody = document.createElement("div");
+        folderBody.className = "sp-preset-folder-body";
+        for (const item of items) {
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "sp-pick-item";
-          const title = document.createElement("div");
-          title.textContent = item.name;
+          const nameEl = document.createElement("div");
+          nameEl.textContent = item.name;
           const meta = document.createElement("div");
           meta.className = "sp-mgr-item-meta";
           const bits = [
-            item.category || "Uncategorised",
             formatFieldRange({
               ...item,
               value: item.default ?? 0,
@@ -537,14 +546,72 @@ export function openFieldLibraryPopup({ anchor, onPick, onBlank }) {
           ];
           if (item.notes) bits.push(item.notes);
           meta.textContent = bits.join(" · ");
-          btn.append(title, meta);
+          btn.append(nameEl, meta);
           btn.addEventListener("click", (e) => {
             e.stopPropagation();
             close();
             onPick?.(item);
           });
-          list.appendChild(btn);
+          folderBody.appendChild(btn);
         }
+
+        head.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const collapsed = folder.classList.toggle("collapsed");
+          head.title = collapsed ? "Expand" : "Collapse";
+          head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+          openMap.set(title, !collapsed);
+          reposition?.();
+        });
+
+        folder.append(head, folderBody);
+        return folder;
+      }
+
+      function paint() {
+        const raw = filter.value;
+        const { tokens, hasShelfFilter } = parseSearchQuery(raw);
+        const searching = hasShelfFilter || tokens.length > 0;
+        list.replaceChildren();
+        const shown = defs.filter((item) =>
+          matchesValueField(item, raw, { emptyFolder: UNCATEGORISED }),
+        );
+        if (!shown.length) {
+          const empty = document.createElement("div");
+          empty.className = "sp-popup-message";
+          empty.textContent = defs.length
+            ? "No matches"
+            : "Library empty — gear → Save to library, or manage in Fields tab";
+          list.appendChild(empty);
+          reposition?.();
+          return;
+        }
+
+        const grouped = new Map();
+        for (const item of shown) {
+          const name = (item.category || "").trim() || UNCATEGORISED;
+          const bucket = grouped.get(name) || [];
+          bucket.push(item);
+          grouped.set(name, bucket);
+        }
+
+        const names = [...grouped.keys()].sort((a, b) => {
+          const aUncat = a.toLowerCase() === UNCATEGORISED.toLowerCase();
+          const bUncat = b.toLowerCase() === UNCATEGORISED.toLowerCase();
+          if (aUncat !== bUncat) return aUncat ? -1 : 1;
+          return a.localeCompare(b, undefined, { sensitivity: "base" });
+        });
+
+        for (const folderName of names) {
+          const items = grouped.get(folderName) || [];
+          const expanded = searching
+            ? true
+            : openMap.has(folderName)
+              ? openMap.get(folderName)
+              : folderName === UNCATEGORISED;
+          list.appendChild(makePickFolder(folderName, items, expanded));
+        }
+        reposition?.();
       }
 
       filter.addEventListener("input", paint);
@@ -563,7 +630,6 @@ export function openFieldLibraryPopup({ anchor, onPick, onBlank }) {
           }
           defs = result.fields || [];
           paint();
-          reposition?.();
           requestAnimationFrame(() => filter.focus());
         })
         .catch((err) => {

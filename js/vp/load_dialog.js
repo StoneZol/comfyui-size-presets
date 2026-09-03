@@ -1,7 +1,9 @@
 import { CHEVRON_ICON_SVG, INFO_ICON_SVG } from "../sp/icons.js";
 import { listValuePresets } from "./api.js";
-import { fieldCountLabel, formatFields, makeFieldChips, presetTitle } from "./fields.js";
+import { fieldCountLabel, makeFieldChips, notesPreview, presetTitle } from "./fields.js";
 import { openPopup } from "../sp/popup.js";
+import { matchesValuePreset, parseSearchQuery } from "../sp/search.js";
+import { presetSearchPlaceholder } from "./prefs.js";
 
 const UNCATEGORISED = "Uncategorised";
 
@@ -58,6 +60,17 @@ function makePresetCard(preset, { onLoad }) {
   slots.className = "sp-preset-slots";
   slots.textContent = fieldCountLabel(preset.fields);
   loadBtn.append(name, slots);
+  const preview = notesPreview(preset.notes);
+  if (preview) {
+    const notes = document.createElement("div");
+    notes.className = "sp-preset-desc";
+    notes.style.whiteSpace = "nowrap";
+    notes.style.overflow = "hidden";
+    notes.style.textOverflow = "ellipsis";
+    notes.textContent = preview;
+    notes.title = String(preset.notes || "").trim();
+    loadBtn.appendChild(notes);
+  }
 
   const infoBtn = document.createElement("button");
   infoBtn.type = "button";
@@ -136,34 +149,25 @@ function makeFolder({ title, presets, expanded, onLoad }) {
   return folder;
 }
 
-function matchesPreset(preset, query) {
-  if (!query) return true;
-  const haystack = [
-    preset.name,
-    preset.notes,
-    preset.category || UNCATEGORISED,
-    formatFields(preset.fields),
-    ...(preset.fields || []).map((f) => f.name),
-  ]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(query);
+function matchesPreset(preset, query, includeFields) {
+  return matchesValuePreset(preset, query, { emptyFolder: UNCATEGORISED, includeFields });
 }
 
-function paintPresetList(list, presets, query, onLoad) {
-  const q = (query || "").trim().toLowerCase();
-  const matched = presets.filter((preset) => matchesPreset(preset, q));
+function paintPresetList(list, presets, query, onLoad, includeFields) {
+  const raw = query || "";
+  const { tokens, hasShelfFilter } = parseSearchQuery(raw);
+  const searching = hasShelfFilter || tokens.length > 0;
+  const matched = presets.filter((preset) => matchesPreset(preset, raw, includeFields));
   list.replaceChildren();
   if (!matched.length) {
     const empty = document.createElement("div");
     empty.className = "sp-popup-message";
-    empty.textContent = q ? "No presets" : "No saved presets yet.";
+    empty.textContent = searching ? "No presets" : "No saved presets yet.";
     list.appendChild(empty);
     return;
   }
 
   const grouped = groupPresets(matched);
-  const searching = Boolean(q);
   if (grouped.uncategorised.length) {
     list.appendChild(
       makeFolder({
@@ -186,7 +190,36 @@ function paintPresetList(list, presets, query, onLoad) {
   }
 }
 
-export function openLoadValuePopup({ anchor, onPick }) {
+function makeFieldsSearchToggle({ on, onChange }) {
+  let enabled = !!on;
+  const row = document.createElement("div");
+  row.className = "sp-toggle-row";
+  const toggle = document.createElement("div");
+  toggle.className = "sp-toggle";
+  toggle.setAttribute("role", "switch");
+  toggle.appendChild(Object.assign(document.createElement("div"), { className: "sp-toggle-knob" }));
+  const label = document.createElement("span");
+  label.textContent = "Search in fields";
+  row.append(toggle, label);
+
+  function sync() {
+    toggle.classList.toggle("on", enabled);
+    toggle.setAttribute("aria-checked", enabled ? "true" : "false");
+  }
+  sync();
+
+  function flip(e) {
+    e.stopPropagation();
+    enabled = !enabled;
+    sync();
+    onChange?.(enabled);
+  }
+  toggle.addEventListener("click", flip);
+  label.addEventListener("click", flip);
+  return { row, get: () => enabled };
+}
+
+export function openLoadValuePopup({ anchor, onPick, searchInFields = false, onSearchInFieldsChange }) {
   return openPopup({
     anchor,
     title: "Load preset",
@@ -215,7 +248,6 @@ export function openLoadValuePopup({ anchor, onPick }) {
           const search = document.createElement("input");
           search.className = "sp-popup-input";
           search.type = "text";
-          search.placeholder = "search category or field";
 
           const list = document.createElement("div");
           list.className = "sp-preset-list";
@@ -225,13 +257,29 @@ export function openLoadValuePopup({ anchor, onPick }) {
             onPick?.(picked);
           };
 
-          search.addEventListener("input", () => {
-            paintPresetList(list, presets, search.value, onLoad);
-            reposition?.();
+          let includeFields = !!searchInFields;
+          search.placeholder = presetSearchPlaceholder(includeFields);
+
+          const fieldsToggle = makeFieldsSearchToggle({
+            on: includeFields,
+            onChange: (next) => {
+              includeFields = next;
+              onSearchInFieldsChange?.(next);
+              search.placeholder = presetSearchPlaceholder(next);
+              paintPresetList(list, presets, search.value, onLoad, includeFields);
+              reposition?.();
+            },
           });
 
-          paintPresetList(list, presets, "", onLoad);
-          body.append(search, list);
+          const repaint = () => {
+            paintPresetList(list, presets, search.value, onLoad, includeFields);
+            reposition?.();
+          };
+
+          search.addEventListener("input", repaint);
+
+          paintPresetList(list, presets, "", onLoad, includeFields);
+          body.append(search, fieldsToggle.row, list);
           reposition?.();
           requestAnimationFrame(() => search.focus());
         })
