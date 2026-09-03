@@ -1,10 +1,21 @@
 import { app } from "../../../scripts/app.js";
 import { injectStyles } from "./sp/styles.js";
-import { LOAD_ICON_SVG, PLUS_ICON_SVG, SAVE_ICON_SVG } from "./sp/icons.js";
-import { defaultField, fieldsJson, isolatePointer, MAX_FIELDS, parseFields, selectOnFocus } from "./vp/fields.js";
+import { GEAR_ICON_SVG, LOAD_ICON_SVG, PLUS_ICON_SVG, SAVE_ICON_SVG } from "./sp/icons.js";
+import {
+  clampValue,
+  defaultField,
+  fieldFromDef,
+  fieldsJson,
+  isolatePointer,
+  MAX_FIELDS,
+  normalizeField,
+  parseFields,
+  selectOnFocus,
+} from "./vp/fields.js";
 import { openSaveValuePopup } from "./vp/save_dialog.js";
 import { openLoadValuePopup } from "./vp/load_dialog.js";
 import { openValueManagerPopup } from "./vp/manager_dialog.js";
+import { openFieldConfigPopup, openFieldLibraryPopup } from "./vp/field_config.js";
 import {
   createShadowNumber,
   hideDataWidget,
@@ -16,7 +27,7 @@ import {
 
 injectStyles("size-presets-styles");
 
-const MIN_NODE_WIDTH = 300;
+const MIN_NODE_WIDTH = 320;
 const BUTTON_PANEL_HEIGHT = 70;
 const FIELD_ROW_HEIGHT = 34;
 const ADD_ROW_HEIGHT = 30;
@@ -46,7 +57,13 @@ app.registerExtension({
 
       let dataWidget = node.widgets?.find((w) => w.name === "fields_json");
       if (!dataWidget) {
-        dataWidget = node.addWidget("text", "fields_json", '[{"name":"value","type":"FLOAT","value":0}]', () => {}, {});
+        dataWidget = node.addWidget(
+          "text",
+          "fields_json",
+          '[{"name":"value","type":"FLOAT","value":0}]',
+          () => {},
+          {},
+        );
       }
       hideDataWidget(dataWidget);
       dataWidget.type = "";
@@ -90,8 +107,6 @@ app.registerExtension({
       function persist({ light = false } = {}) {
         if (!dataWidget) return;
         dataWidget.value = fieldsJson(fields);
-        // Full dirty redraw remounts Vue widgets under a held mouse button and
-        // turns one spinner click into a burst of steps.
         node.setDirtyCanvas(true, !light);
       }
 
@@ -103,7 +118,7 @@ app.registerExtension({
           if (!field) continue;
           const number = Number(widget.value);
           if (!Number.isFinite(number)) continue;
-          field.value = field.type === "INT" ? Math.round(number) : number;
+          field.value = clampValue(number, field.type, field.min, field.max);
         }
       }
 
@@ -117,7 +132,7 @@ app.registerExtension({
           prev?.apply(this, arguments);
           if (syncing) return;
           const number = Number(widget.value);
-          field.value = Number.isFinite(number) ? (field.type === "INT" ? Math.round(number) : number) : 0;
+          field.value = clampValue(number, field.type, field.min, field.max);
           persist({ light: true });
           syncOutputs();
           const input = fieldsWrap.querySelector(`[data-vp-id="${field.id}"] .vp-field-value`);
@@ -155,7 +170,9 @@ app.registerExtension({
         widget.label = field.name;
         widget.options = {
           ...(widget.options || {}),
-          step: field.type === "INT" ? 1 : 0.01,
+          min: field.min,
+          max: field.max,
+          step: field.step,
           precision: field.type === "INT" ? 0 : 3,
         };
         if (widget.value !== field.value) widget.value = field.value;
@@ -223,10 +240,19 @@ app.registerExtension({
       }
 
       function applyFields(next, { rebuild = false } = {}) {
-        fields = (next || []).slice(0, MAX_FIELDS);
+        fields = (next || []).slice(0, MAX_FIELDS).map(normalizeField);
         persist();
         if (rebuild) rebuildShadows();
         else for (const field of fields) writeShadow(field);
+        syncOutputs();
+        paint();
+      }
+
+      function addFieldInstance(field) {
+        if (fields.length >= MAX_FIELDS) return;
+        fields.push(normalizeField(field));
+        persist();
+        addShadow(fields[fields.length - 1]);
         syncOutputs();
         paint();
       }
@@ -254,11 +280,20 @@ app.registerExtension({
           const valueInput = document.createElement("input");
           valueInput.className = "vp-field-value";
           valueInput.type = "number";
-          valueInput.step = field.type === "INT" ? "1" : "0.01";
+          valueInput.min = String(field.min);
+          valueInput.max = String(field.max);
+          valueInput.step = String(field.step);
           valueInput.value = String(field.value);
+          valueInput.title = `${field.min} … ${field.max} · step ${field.step}`;
           selectOnFocus(valueInput);
           isolatePointer(valueInput);
           isolatePointer(nameInput);
+
+          const configBtn = document.createElement("button");
+          configBtn.type = "button";
+          configBtn.className = "vp-field-config";
+          configBtn.title = "Limits & library";
+          configBtn.innerHTML = GEAR_ICON_SVG;
 
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
@@ -268,7 +303,8 @@ app.registerExtension({
           removeBtn.disabled = fields.length <= 1;
 
           nameInput.addEventListener("change", () => {
-            field.name = nameInput.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
+            field.name =
+              nameInput.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
             persist();
             writeShadow(field);
             syncOutputs();
@@ -276,16 +312,19 @@ app.registerExtension({
           });
           typeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            field.type = field.type === "INT" ? "FLOAT" : "INT";
-            field.value = field.type === "INT" ? Math.round(Number(field.value) || 0) : Number(field.value) || 0;
+            fields[index] = normalizeField({
+              ...field,
+              type: field.type === "INT" ? "FLOAT" : "INT",
+              step: field.type === "INT" ? 0.01 : 1,
+            });
             persist();
             rebuildShadows();
             syncOutputs();
             paint();
           });
           valueInput.addEventListener("change", () => {
-            const number = Number(valueInput.value);
-            field.value = Number.isFinite(number) ? (field.type === "INT" ? Math.round(number) : number) : 0;
+            field.value = clampValue(valueInput.value, field.type, field.min, field.max);
+            valueInput.value = String(field.value);
             persist({ light: true });
             writeShadow(field);
             syncOutputs();
@@ -293,6 +332,21 @@ app.registerExtension({
           valueInput.addEventListener("keydown", (e) => {
             if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
             e.stopPropagation();
+          });
+          configBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openFieldConfigPopup({
+              anchor: configBtn,
+              field,
+              nested: false,
+              onSave: (next) => {
+                fields[index] = normalizeField({ ...next, id: field.id });
+                persist();
+                rebuildShadows();
+                syncOutputs();
+                paint();
+              },
+            });
           });
           removeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -304,7 +358,7 @@ app.registerExtension({
             paint();
           });
 
-          row.append(nameInput, typeBtn, valueInput, removeBtn);
+          row.append(nameInput, typeBtn, valueInput, configBtn, removeBtn);
           fieldsWrap.appendChild(row);
         });
         addBtn.disabled = fields.length >= MAX_FIELDS;
@@ -315,12 +369,11 @@ app.registerExtension({
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (fields.length >= MAX_FIELDS) return;
-        const field = defaultField(fields);
-        fields.push(field);
-        persist();
-        addShadow(field);
-        syncOutputs();
-        paint();
+        openFieldLibraryPopup({
+          anchor: addBtn,
+          onBlank: () => addFieldInstance(defaultField(fields)),
+          onPick: (def) => addFieldInstance(fieldFromDef(def, fields)),
+        });
       });
 
       loadBtn.addEventListener("click", (e) => {

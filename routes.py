@@ -9,6 +9,8 @@ SIZES_ROUTE = "/size_presets/sizes"
 CATEGORIES_ROUTE = "/size_presets/categories"
 VALUE_PRESETS_ROUTE = "/value_presets/presets"
 VALUE_CATEGORIES_ROUTE = "/value_presets/categories"
+VALUE_FIELDS_ROUTE = "/value_presets/fields"
+VALUE_FIELD_CATEGORIES_ROUTE = "/value_presets/field_categories"
 
 db.init_db()
 
@@ -131,6 +133,7 @@ async def save_value_preset(request):
             payload.get("category") or "",
             payload.get("fields"),
             payload.get("name") or "",
+            payload.get("notes") or "",
         )
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
@@ -156,6 +159,7 @@ async def update_value_preset(request):
             category=payload["category"] if "category" in payload else None,
             fields=payload["fields"] if "fields" in payload else None,
             name=payload["name"] if "name" in payload else None,
+            notes=payload["notes"] if "notes" in payload else None,
         )
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
@@ -214,3 +218,109 @@ if VALUE_CATEGORIES_ROUTE not in _existing:
     PromptServer.instance.routes.get(VALUE_CATEGORIES_ROUTE)(list_value_categories)
     PromptServer.instance.routes.patch(VALUE_CATEGORIES_ROUTE)(update_value_category)
     PromptServer.instance.routes.delete(VALUE_CATEGORIES_ROUTE)(delete_value_category)
+
+
+async def list_value_field_defs(request):
+    try:
+        result = db.values.list_value_field_defs()
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    return web.json_response(result)
+
+
+async def save_value_field_def(request):
+    payload = await _read_json(request)
+    if payload is None:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+    try:
+        if payload.get("upsert"):
+            result = db.values.upsert_value_field_def(payload)
+        else:
+            result = db.values.save_value_field_def(payload)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 409 if result.get("conflicts") else 400
+    return web.json_response(result, status=status)
+
+
+async def upsert_value_field_def(request):
+    payload = await _read_json(request)
+    if payload is None:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+    try:
+        result = db.values.upsert_value_field_def(payload)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+async def update_value_field_def(request):
+    payload = await _read_json(request)
+    if payload is None or not payload.get("id"):
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+    try:
+        result = db.values.update_value_field_def(int(payload["id"]), payload)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 409 if result.get("conflicts") else 400
+    return web.json_response(result, status=status)
+
+
+async def delete_value_field_def(request):
+    field_id = request.rel_url.query.get("id")
+    if not field_id:
+        return web.json_response({"ok": False, "error": "Missing id"}, status=400)
+    try:
+        result = db.values.delete_value_field_def(int(field_id))
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 404 if result.get("error") == "Not found" else 400
+    return web.json_response(result, status=status)
+
+
+if VALUE_FIELDS_ROUTE not in _existing:
+    PromptServer.instance.routes.get(VALUE_FIELDS_ROUTE)(list_value_field_defs)
+    PromptServer.instance.routes.post(VALUE_FIELDS_ROUTE)(save_value_field_def)
+    PromptServer.instance.routes.put(VALUE_FIELDS_ROUTE)(upsert_value_field_def)
+    PromptServer.instance.routes.patch(VALUE_FIELDS_ROUTE)(update_value_field_def)
+    PromptServer.instance.routes.delete(VALUE_FIELDS_ROUTE)(delete_value_field_def)
+
+
+async def list_value_field_categories(request):
+    try:
+        result = db.values.list_value_field_categories()
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    return web.json_response(result)
+
+
+async def update_value_field_category(request):
+    payload = await _read_json(request)
+    if payload is None:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+    try:
+        result = db.values.rename_value_field_category(
+            payload.get("name") or "",
+            payload.get("new_name") or "",
+        )
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 409 if result.get("conflicts") else 400
+    return web.json_response(result, status=status)
+
+
+async def delete_value_field_category(request):
+    name = request.rel_url.query.get("name") or ""
+    try:
+        result = db.values.delete_value_field_category(name)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    status = 200 if result.get("ok") else 400
+    return web.json_response(result, status=status)
+
+
+if VALUE_FIELD_CATEGORIES_ROUTE not in _existing:
+    PromptServer.instance.routes.get(VALUE_FIELD_CATEGORIES_ROUTE)(list_value_field_categories)
+    PromptServer.instance.routes.patch(VALUE_FIELD_CATEGORIES_ROUTE)(update_value_field_category)
+    PromptServer.instance.routes.delete(VALUE_FIELD_CATEGORIES_ROUTE)(delete_value_field_category)

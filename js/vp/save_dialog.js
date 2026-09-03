@@ -9,7 +9,7 @@ function matchesCategory(name, query) {
   return (name || UNCATEGORISED).toLowerCase().includes(query);
 }
 
-function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
+function openCategoryPicker({ anchor, categories, current, onPick, onClose, onDraft }) {
   return openPopup({
     nested: true,
     anchor,
@@ -21,6 +21,7 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
       filter.className = "sp-popup-input";
       filter.type = "text";
       filter.placeholder = "filter or new name";
+      filter.value = (current || "").trim();
 
       const list = document.createElement("div");
       list.className = "sp-pick-list";
@@ -35,6 +36,7 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
       function paint() {
         const typed = filter.value.trim();
         const q = typed.toLowerCase();
+        onDraft?.(typed);
         list.replaceChildren();
         const shown = items.filter((name) => matchesCategory(name, q));
         const exactMatch = typed && items.some((name) => (name || "").toLowerCase() === q);
@@ -78,13 +80,19 @@ function openCategoryPicker({ anchor, categories, current, onPick, onClose }) {
         if (e.key !== "Enter") return;
         e.preventDefault();
         const typed = filter.value.trim();
-        if (!typed) return;
+        if (!typed) {
+          pick("");
+          return;
+        }
         const exact = items.find((name) => (name || "").toLowerCase() === typed.toLowerCase());
         pick(exact !== undefined ? exact : typed);
       });
       paint();
       body.append(filter, list);
-      requestAnimationFrame(() => filter.focus());
+      requestAnimationFrame(() => {
+        filter.focus();
+        filter.select();
+      });
     },
   });
 }
@@ -113,6 +121,12 @@ export function openSaveValuePopup({ anchor, fields }) {
       } else {
         preview.appendChild(makeFieldChips(fields));
       }
+
+      const notesArea = document.createElement("textarea");
+      notesArea.className = "sp-popup-input sp-mgr-prompt-area";
+      notesArea.rows = 2;
+      notesArea.maxLength = 500;
+      notesArea.placeholder = "notes (optional)";
 
       const folderRow = document.createElement("div");
       folderRow.className = "sp-save-folder-row";
@@ -154,6 +168,9 @@ export function openSaveValuePopup({ anchor, fields }) {
           anchor: pickBtn,
           categories,
           current: folder.value.trim(),
+          onDraft: (typed) => {
+            folder.value = typed;
+          },
           onPick: (name) => {
             folder.value = name || "";
           },
@@ -178,6 +195,7 @@ export function openSaveValuePopup({ anchor, fields }) {
           const result = await saveValuePreset({
             category: folder.value.trim(),
             name: nameInput.value.trim(),
+            notes: notesArea.value.trim(),
             fields,
           });
           if (result.conflicts?.length) {
@@ -201,7 +219,7 @@ export function openSaveValuePopup({ anchor, fields }) {
         submit();
       });
 
-      body.append(nameRow, preview, folderRow, errorEl, actions);
+      body.append(nameRow, preview, notesArea, folderRow, errorEl, actions);
       requestAnimationFrame(() => nameInput.focus());
       listValueCategories()
         .then((result) => {

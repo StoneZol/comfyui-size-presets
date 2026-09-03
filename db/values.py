@@ -15,6 +15,31 @@ from .db import (
 
 MAX_FIELDS = 16
 ALLOWED_TYPES = ("INT", "FLOAT")
+DEFAULT_MIN = 0.0
+DEFAULT_MAX = 1_000_000_000.0
+
+
+def _default_step(typ: str) -> float:
+    return 1.0 if typ == "INT" else 0.01
+
+
+def _coerce_bound(raw, fallback: float, typ: str) -> float:
+    if raw is None or raw == "":
+        return fallback
+    try:
+        number = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    if not (number == number) or number in (float("inf"), float("-inf")):
+        return fallback
+    return float(int(round(number))) if typ == "INT" else float(number)
+
+
+def _clamp_value(value: float, typ: str, min_v: float, max_v: float) -> Any:
+    lo = min(min_v, max_v)
+    hi = max(min_v, max_v)
+    number = max(lo, min(hi, float(value)))
+    return int(round(number)) if typ == "INT" else float(number)
 
 
 def canonicalize_fields(raw) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], str]:
@@ -47,14 +72,39 @@ def canonicalize_fields(raw) -> Tuple[Optional[List[Dict[str, Any]]], Optional[s
         typ = str(item.get("type") or "FLOAT").strip().upper()
         if typ not in ALLOWED_TYPES:
             return None, "Type must be INT or FLOAT", ""
+        min_v = _coerce_bound(item.get("min"), DEFAULT_MIN, typ)
+        max_v = _coerce_bound(item.get("max"), DEFAULT_MAX, typ)
+        step_raw = item.get("step")
+        if step_raw is None or step_raw == "":
+            step_v = _default_step(typ)
+        else:
+            try:
+                step_v = float(step_raw)
+            except (TypeError, ValueError):
+                return None, f"Invalid step for “{name}”", ""
+            if not (step_v == step_v) or step_v <= 0:
+                return None, f"Step for “{name}” must be > 0", ""
+            if typ == "INT":
+                step_v = max(1.0, float(int(round(step_v))))
         try:
             number = float(item.get("value", 0))
         except (TypeError, ValueError):
             return None, f"Invalid value for “{name}”", ""
         if not (number == number) or number in (float("inf"), float("-inf")):
             return None, f"Invalid value for “{name}”", ""
-        value: Any = int(round(number)) if typ == "INT" else float(number)
-        fields.append({"name": name, "type": typ, "value": value})
+        value = _clamp_value(number, typ, min_v, max_v)
+        fields.append(
+            {
+                "name": name,
+                "type": typ,
+                "value": value,
+                "min": int(min_v) if typ == "INT" else float(min_v),
+                "max": int(max_v) if typ == "INT" else float(max_v),
+                "step": int(step_v) if typ == "INT" else float(step_v),
+                "category": _normalize_category(item.get("category") or ""),
+                "notes": _normalize_notes(item.get("notes") or ""),
+            }
+        )
 
     key = "|".join(
         f"{f['name'].casefold()}:{f['type']}:{_key_number(f['type'], f['value'])}" for f in fields
@@ -90,14 +140,24 @@ def _normalize_preset_name(name: str) -> str:
     return (name or "").strip()[:80]
 
 
+def _normalize_notes(notes: str) -> str:
+    return (notes or "").strip()[:500]
+
+
 def _preset_row(row) -> Dict:
     try:
         fields = json.loads(row["fields_json"] or "[]")
     except json.JSONDecodeError:
         fields = []
+    notes = ""
+    try:
+        notes = row["notes"] or ""
+    except (KeyError, IndexError):
+        notes = ""
     return {
         "id": int(row["id"]),
         "name": row["name"] or "",
+        "notes": notes,
         "fields": fields,
         "category": row["category"] or "",
     }
@@ -117,13 +177,14 @@ def _find_by_name(conn, category_id: Optional[int], name: str, exclude_id: Optio
     return conn.execute(sql, params).fetchone()
 
 
-def save_value_preset(category: str, fields, name: str = "") -> Dict:
+def save_value_preset(category: str, fields, name: str = "", notes: str = "") -> Dict:
     parsed, error, fields_key = canonicalize_fields(fields)
     if error:
         return {"ok": False, "error": error}
     title = _normalize_preset_name(name)
     if not title:
         return {"ok": False, "error": "Preset name is required"}
+    note = _normalize_notes(notes)
 
     payload = fields_json(parsed)
     with _lock:
@@ -137,13 +198,20 @@ def save_value_preset(category: str, fields, name: str = "") -> Dict:
                 return {"ok": False, "conflicts": [{"category": category_name, "name": title}]}
             conn.execute(
                 """
-                INSERT INTO value_presets (category_id, name, fields_json, fields_key)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO value_presets (category_id, name, notes, fields_json, fields_key)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (category_id, title, payload, fields_key),
+                (category_id, title, note, payload, fields_key),
             )
+            _upsert_fields_into_library(conn, parsed)
             conn.commit()
-            return {"ok": True, "name": title, "fields": parsed, "category": category_name}
+            return {
+                "ok": True,
+                "name": title,
+                "notes": note,
+                "fields": parsed,
+                "category": category_name,
+            }
         except Exception:
             conn.rollback()
             raise
@@ -162,6 +230,7 @@ def list_value_presets(category: str = "") -> Dict:
                     SELECT
                         value_presets.id,
                         value_presets.name AS name,
+                        value_presets.notes AS notes,
                         value_presets.fields_json,
                         value_categories.name AS category
                     FROM value_presets
@@ -177,6 +246,7 @@ def list_value_presets(category: str = "") -> Dict:
                     SELECT
                         value_presets.id,
                         value_presets.name AS name,
+                        value_presets.notes AS notes,
                         value_presets.fields_json,
                         value_categories.name AS category
                     FROM value_presets
@@ -227,6 +297,7 @@ def update_value_preset(
     category: Optional[str] = None,
     fields=None,
     name: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> Dict:
     with _lock:
         conn = _connect()
@@ -264,6 +335,12 @@ def update_value_preset(
                 conn.rollback()
                 return {"ok": False, "error": "Preset name is required"}
 
+            try:
+                current_notes = row["notes"] or ""
+            except (KeyError, IndexError):
+                current_notes = ""
+            note = current_notes if notes is None else _normalize_notes(notes)
+
             category_id = row["category_id"]
             category_name = row["category"] or ""
             if category is not None:
@@ -277,16 +354,20 @@ def update_value_preset(
             conn.execute(
                 """
                 UPDATE value_presets
-                SET category_id = ?, name = ?, fields_json = ?, fields_key = ?, updated_at = datetime('now')
+                SET category_id = ?, name = ?, notes = ?, fields_json = ?, fields_key = ?,
+                    updated_at = datetime('now')
                 WHERE id = ?
                 """,
-                (category_id, title, next_fields, next_key, int(preset_id)),
+                (category_id, title, note, next_fields, next_key, int(preset_id)),
             )
+            if fields is not None:
+                _upsert_fields_into_library(conn, parsed)
             conn.commit()
             return {
                 "ok": True,
                 "id": int(preset_id),
                 "name": title,
+                "notes": note,
                 "fields": parsed,
                 "category": category_name,
             }
@@ -374,6 +455,477 @@ def delete_value_category(name: str) -> Dict:
             conn.execute("DELETE FROM value_categories WHERE id = ?", (int(row["id"]),))
             conn.commit()
             return {"ok": True, "deleted": int(count)}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _get_or_create_field_category(conn, name: str) -> Tuple[Optional[int], str]:
+    title = _normalize_category(name)
+    if _is_uncategorised(title):
+        return None, ""
+    row = conn.execute(
+        "SELECT id, name FROM value_field_categories WHERE name = ? COLLATE NOCASE",
+        (title,),
+    ).fetchone()
+    if row:
+        return int(row["id"]), row["name"]
+    cur = conn.execute("INSERT INTO value_field_categories (name) VALUES (?)", (title,))
+    return int(cur.lastrowid), title
+
+
+def _field_def_row(row) -> Dict:
+    typ = str(row["type"] or "FLOAT").upper()
+    if typ not in ALLOWED_TYPES:
+        typ = "FLOAT"
+    min_v = row["min_value"]
+    max_v = row["max_value"]
+    step_v = row["step_value"]
+    default_v = row["default_value"]
+    try:
+        notes = row["notes"] or ""
+    except (KeyError, IndexError):
+        notes = ""
+    try:
+        category = row["category"] or ""
+    except (KeyError, IndexError):
+        category = ""
+    return {
+        "id": int(row["id"]),
+        "name": row["name"] or "",
+        "type": typ,
+        "min": None if min_v is None else (int(min_v) if typ == "INT" else float(min_v)),
+        "max": None if max_v is None else (int(max_v) if typ == "INT" else float(max_v)),
+        "step": None if step_v is None else (int(step_v) if typ == "INT" else float(step_v)),
+        "default": int(default_v) if typ == "INT" else float(default_v),
+        "notes": notes,
+        "category": category,
+    }
+
+
+def _canonicalize_field_def(payload: Dict) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return None, "Field name is required"
+    if len(name) > 40:
+        return None, "Field name is too long"
+    typ = str(payload.get("type") or "FLOAT").strip().upper()
+    if typ not in ALLOWED_TYPES:
+        return None, "Type must be INT or FLOAT"
+    min_v = _coerce_bound(payload.get("min"), DEFAULT_MIN, typ)
+    max_v = _coerce_bound(payload.get("max"), DEFAULT_MAX, typ)
+    step_raw = payload.get("step")
+    if step_raw is None or step_raw == "":
+        step_v = _default_step(typ)
+    else:
+        try:
+            step_v = float(step_raw)
+        except (TypeError, ValueError):
+            return None, "Invalid step"
+        if not (step_v == step_v) or step_v <= 0:
+            return None, "Step must be > 0"
+        if typ == "INT":
+            step_v = max(1.0, float(int(round(step_v))))
+    try:
+        default_raw = float(payload.get("default", payload.get("value", 0)))
+    except (TypeError, ValueError):
+        return None, "Invalid default"
+    default_v = _clamp_value(default_raw, typ, min_v, max_v)
+    return {
+        "name": name,
+        "type": typ,
+        "min": int(min_v) if typ == "INT" else float(min_v),
+        "max": int(max_v) if typ == "INT" else float(max_v),
+        "step": int(step_v) if typ == "INT" else float(step_v),
+        "default": default_v,
+        "notes": _normalize_notes(payload.get("notes") or ""),
+        "category": _normalize_category(payload.get("category") or ""),
+    }, None
+
+
+def list_value_field_defs() -> Dict:
+    with _lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    value_field_defs.id,
+                    value_field_defs.name,
+                    value_field_defs.type,
+                    value_field_defs.min_value,
+                    value_field_defs.max_value,
+                    value_field_defs.step_value,
+                    value_field_defs.default_value,
+                    value_field_defs.notes,
+                    value_field_categories.name AS category
+                FROM value_field_defs
+                LEFT JOIN value_field_categories
+                    ON value_field_categories.id = value_field_defs.category_id
+                ORDER BY
+                    CASE WHEN value_field_categories.name IS NULL THEN 0 ELSE 1 END,
+                    value_field_categories.name COLLATE NOCASE,
+                    value_field_defs.name COLLATE NOCASE
+                """
+            ).fetchall()
+            return {"ok": True, "fields": [_field_def_row(row) for row in rows]}
+        finally:
+            conn.close()
+
+
+def list_value_field_categories() -> Dict:
+    with _lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    value_field_categories.name AS name,
+                    COUNT(value_field_defs.id) AS count
+                FROM value_field_categories
+                LEFT JOIN value_field_defs ON value_field_defs.category_id = value_field_categories.id
+                GROUP BY value_field_categories.id
+                ORDER BY value_field_categories.name COLLATE NOCASE
+                """
+            ).fetchall()
+            uncategorised = conn.execute(
+                "SELECT COUNT(*) AS c FROM value_field_defs WHERE category_id IS NULL"
+            ).fetchone()["c"]
+            return {
+                "ok": True,
+                "categories": [{"name": row["name"], "count": int(row["count"] or 0)} for row in rows],
+                "uncategorised_count": int(uncategorised or 0),
+                "uncategorised": UNCATEGORISED_NAME,
+            }
+        finally:
+            conn.close()
+
+
+def save_value_field_def(payload: Dict) -> Dict:
+    parsed, error = _canonicalize_field_def(payload or {})
+    if error:
+        return {"ok": False, "error": error}
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            existing = conn.execute(
+                "SELECT id FROM value_field_defs WHERE name = ? COLLATE NOCASE",
+                (parsed["name"],),
+            ).fetchone()
+            if existing:
+                conn.rollback()
+                return {"ok": False, "conflicts": [{"name": parsed["name"]}]}
+            category_id, category_name = _get_or_create_field_category(conn, parsed["category"])
+            cur = conn.execute(
+                """
+                INSERT INTO value_field_defs
+                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category_id,
+                    parsed["name"],
+                    parsed["type"],
+                    parsed["min"],
+                    parsed["max"],
+                    parsed["step"],
+                    parsed["default"],
+                    parsed["notes"],
+                ),
+            )
+            conn.commit()
+            return {
+                "ok": True,
+                "field": {**parsed, "id": int(cur.lastrowid), "category": category_name},
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def upsert_value_field_def(payload: Dict) -> Dict:
+    """Create or update a library field by name (used from node gear / save preset)."""
+    parsed, error = _canonicalize_field_def(payload or {})
+    if error:
+        return {"ok": False, "error": error}
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            existing = conn.execute(
+                "SELECT id FROM value_field_defs WHERE name = ? COLLATE NOCASE",
+                (parsed["name"],),
+            ).fetchone()
+            category_id, category_name = _get_or_create_field_category(conn, parsed["category"])
+            if existing:
+                field_id = int(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE value_field_defs
+                    SET category_id = ?, name = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
+                        default_value = ?, notes = ?, updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (
+                        category_id,
+                        parsed["name"],
+                        parsed["type"],
+                        parsed["min"],
+                        parsed["max"],
+                        parsed["step"],
+                        parsed["default"],
+                        parsed["notes"],
+                        field_id,
+                    ),
+                )
+                conn.commit()
+                return {
+                    "ok": True,
+                    "updated": True,
+                    "field": {**parsed, "id": field_id, "category": category_name},
+                }
+            cur = conn.execute(
+                """
+                INSERT INTO value_field_defs
+                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category_id,
+                    parsed["name"],
+                    parsed["type"],
+                    parsed["min"],
+                    parsed["max"],
+                    parsed["step"],
+                    parsed["default"],
+                    parsed["notes"],
+                ),
+            )
+            conn.commit()
+            return {
+                "ok": True,
+                "updated": False,
+                "field": {**parsed, "id": int(cur.lastrowid), "category": category_name},
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _upsert_fields_into_library(conn, fields: List[Dict[str, Any]]) -> None:
+    for item in fields or []:
+        parsed, error = _canonicalize_field_def(
+            {
+                "name": item.get("name"),
+                "type": item.get("type"),
+                "min": item.get("min"),
+                "max": item.get("max"),
+                "step": item.get("step"),
+                "default": item.get("value", item.get("default", 0)),
+                "category": item.get("category") or "",
+                "notes": item.get("notes") or "",
+            }
+        )
+        if error or not parsed:
+            continue
+        existing = conn.execute(
+            """
+            SELECT
+                value_field_defs.id,
+                value_field_defs.category_id,
+                value_field_defs.notes,
+                value_field_categories.name AS category
+            FROM value_field_defs
+            LEFT JOIN value_field_categories
+                ON value_field_categories.id = value_field_defs.category_id
+            WHERE value_field_defs.name = ? COLLATE NOCASE
+            """,
+            (parsed["name"],),
+        ).fetchone()
+        if existing:
+            # Don't wipe library shelf metadata when preset slots have none yet.
+            category = parsed["category"] or (existing["category"] or "")
+            notes = parsed["notes"] or (existing["notes"] or "")
+            category_id, _category_name = _get_or_create_field_category(conn, category)
+            conn.execute(
+                """
+                UPDATE value_field_defs
+                SET category_id = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
+                    default_value = ?, notes = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    category_id,
+                    parsed["type"],
+                    parsed["min"],
+                    parsed["max"],
+                    parsed["step"],
+                    parsed["default"],
+                    notes,
+                    int(existing["id"]),
+                ),
+            )
+        else:
+            category_id, _category_name = _get_or_create_field_category(conn, parsed["category"])
+            conn.execute(
+                """
+                INSERT INTO value_field_defs
+                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category_id,
+                    parsed["name"],
+                    parsed["type"],
+                    parsed["min"],
+                    parsed["max"],
+                    parsed["step"],
+                    parsed["default"],
+                    parsed["notes"],
+                ),
+            )
+
+
+def update_value_field_def(field_id: int, payload: Dict) -> Dict:
+    parsed, error = _canonicalize_field_def(payload or {})
+    if error:
+        return {"ok": False, "error": error}
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT id FROM value_field_defs WHERE id = ?",
+                (int(field_id),),
+            ).fetchone()
+            if not row:
+                conn.rollback()
+                return {"ok": False, "error": "Not found"}
+            existing = conn.execute(
+                "SELECT id FROM value_field_defs WHERE name = ? COLLATE NOCASE AND id != ?",
+                (parsed["name"], int(field_id)),
+            ).fetchone()
+            if existing:
+                conn.rollback()
+                return {"ok": False, "conflicts": [{"name": parsed["name"]}]}
+            category_id, category_name = _get_or_create_field_category(conn, parsed["category"])
+            conn.execute(
+                """
+                UPDATE value_field_defs
+                SET category_id = ?, name = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
+                    default_value = ?, notes = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    category_id,
+                    parsed["name"],
+                    parsed["type"],
+                    parsed["min"],
+                    parsed["max"],
+                    parsed["step"],
+                    parsed["default"],
+                    parsed["notes"],
+                    int(field_id),
+                ),
+            )
+            conn.commit()
+            return {
+                "ok": True,
+                "field": {**parsed, "id": int(field_id), "category": category_name},
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def delete_value_field_def(field_id: int) -> Dict:
+    with _lock:
+        conn = _connect()
+        try:
+            cur = conn.execute("DELETE FROM value_field_defs WHERE id = ?", (int(field_id),))
+            conn.commit()
+            if cur.rowcount == 0:
+                return {"ok": False, "error": "Not found"}
+            return {"ok": True}
+        finally:
+            conn.close()
+
+
+def rename_value_field_category(name: str, new_name: str) -> Dict:
+    old = _normalize_category(name)
+    new = _normalize_category(new_name)
+    if _is_uncategorised(old):
+        return {"ok": False, "error": "Cannot rename Uncategorised"}
+    if not new or _is_uncategorised(new):
+        return {"ok": False, "error": "Invalid name"}
+    if old.casefold() == new.casefold():
+        return {"ok": True, "name": new}
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT id FROM value_field_categories WHERE name = ? COLLATE NOCASE",
+                (old,),
+            ).fetchone()
+            if not row:
+                conn.rollback()
+                return {"ok": False, "error": "Not found"}
+            existing = conn.execute(
+                "SELECT id FROM value_field_categories WHERE name = ? COLLATE NOCASE",
+                (new,),
+            ).fetchone()
+            if existing:
+                conn.rollback()
+                return {"ok": False, "conflicts": [{"name": new}]}
+            conn.execute(
+                "UPDATE value_field_categories SET name = ? WHERE id = ?",
+                (new, int(row["id"])),
+            )
+            conn.commit()
+            return {"ok": True, "name": new}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def delete_value_field_category(name: str) -> Dict:
+    shelf = _normalize_category(name)
+    if _is_uncategorised(shelf):
+        return {"ok": False, "error": "Cannot delete Uncategorised"}
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT id FROM value_field_categories WHERE name = ? COLLATE NOCASE",
+                (shelf,),
+            ).fetchone()
+            if not row:
+                conn.rollback()
+                return {"ok": False, "error": "Not found"}
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM value_field_defs WHERE category_id = ?",
+                (int(row["id"]),),
+            ).fetchone()["c"]
+            conn.execute(
+                "UPDATE value_field_defs SET category_id = NULL WHERE category_id = ?",
+                (int(row["id"]),),
+            )
+            conn.execute("DELETE FROM value_field_categories WHERE id = ?", (int(row["id"]),))
+            conn.commit()
+            return {"ok": True, "moved": int(count)}
         except Exception:
             conn.rollback()
             raise

@@ -217,6 +217,33 @@ const CSS = `
   padding: 0;
 }
 
+.vp-field-config {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--descrip-text, #888);
+  cursor: pointer;
+  padding: 0;
+}
+
+.vp-field-config svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.vp-field-config:hover {
+  color: var(--input-text, #ddd);
+  border-color: var(--border-color, #444);
+  background: var(--comfy-menu-bg, #1e1e1e);
+}
+
 .vp-field-remove:hover {
   color: #e07070;
   border-color: #7a3a3a;

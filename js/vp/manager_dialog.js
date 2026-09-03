@@ -1,16 +1,35 @@
-import { CHEVRON_ICON_SVG, COPY_ICON_SVG, EDIT_ICON_SVG, MOVE_ICON_SVG, PLUS_ICON_SVG, TRASH_ICON_SVG } from "../sp/icons.js";
+import { CHEVRON_ICON_SVG, COPY_ICON_SVG, EDIT_ICON_SVG, GEAR_ICON_SVG, INFO_ICON_SVG, MOVE_ICON_SVG, PLUS_ICON_SVG, TRASH_ICON_SVG } from "../sp/icons.js";
 import { openConfirmPopup, openInputPopup, openPopup } from "../sp/popup.js";
 import {
   categoryNames,
   deleteValueCategory,
+  deleteValueFieldCategory,
+  deleteValueFieldDef,
   deleteValuePreset,
   listValueCategories,
+  listValueFieldCategories,
+  listValueFieldDefs,
   listValuePresets,
   renameValueCategory,
+  renameValueFieldCategory,
   saveValuePreset,
   updateValuePreset,
 } from "./api.js";
-import { defaultField, formatFields, isolatePointer, makeFieldChips, MAX_FIELDS, normalizeField, presetTitle, selectOnFocus } from "./fields.js";
+import {
+  clampValue,
+  defaultField,
+  fieldCountLabel,
+  fieldFromDef,
+  formatFieldRange,
+  formatFields,
+  isolatePointer,
+  makeFieldChips,
+  MAX_FIELDS,
+  normalizeField,
+  presetTitle,
+  selectOnFocus,
+} from "./fields.js";
+import { openFieldConfigPopup, openFieldDefEditor, openFieldLibraryPopup } from "./field_config.js";
 
 const UNCATEGORISED = "Uncategorised";
 
@@ -149,6 +168,13 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
       nameInput.value = preset.name || "";
       nameRow.append(nameLabel, nameInput);
 
+      const notesArea = document.createElement("textarea");
+      notesArea.className = "sp-popup-input sp-mgr-prompt-area";
+      notesArea.rows = 2;
+      notesArea.maxLength = 500;
+      notesArea.placeholder = "notes (optional)";
+      notesArea.value = preset.notes || "";
+
       const fieldsWrap = document.createElement("div");
       fieldsWrap.className = "vp-fields";
 
@@ -182,11 +208,20 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           const valueInput = document.createElement("input");
           valueInput.className = "vp-field-value";
           valueInput.type = "number";
-          valueInput.step = field.type === "INT" ? "1" : "0.01";
+          valueInput.min = String(field.min);
+          valueInput.max = String(field.max);
+          valueInput.step = String(field.step);
           valueInput.value = String(field.value);
+          valueInput.title = `${field.min} … ${field.max} · step ${field.step}`;
           selectOnFocus(valueInput);
           isolatePointer(valueInput);
           isolatePointer(fieldName);
+
+          const configBtn = document.createElement("button");
+          configBtn.type = "button";
+          configBtn.className = "vp-field-config";
+          configBtn.title = "Limits & library";
+          configBtn.innerHTML = GEAR_ICON_SVG;
 
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
@@ -196,22 +231,38 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           removeBtn.disabled = fields.length <= 1;
 
           fieldName.addEventListener("change", () => {
-            fields[index].name = fieldName.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
+            fields[index].name =
+              fieldName.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
           });
           typeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            const type = fields[index].type === "INT" ? "FLOAT" : "INT";
-            const value = type === "INT" ? Math.round(Number(fields[index].value) || 0) : Number(fields[index].value) || 0;
-            fields[index] = { ...fields[index], type, value };
+            fields[index] = normalizeField({
+              ...fields[index],
+              type: fields[index].type === "INT" ? "FLOAT" : "INT",
+              step: fields[index].type === "INT" ? 0.01 : 1,
+            });
             paintFields();
           });
           valueInput.addEventListener("change", () => {
-            const number = Number(valueInput.value);
-            fields[index].value = Number.isFinite(number)
-              ? fields[index].type === "INT"
-                ? Math.round(number)
-                : number
-              : 0;
+            fields[index].value = clampValue(
+              valueInput.value,
+              fields[index].type,
+              fields[index].min,
+              fields[index].max,
+            );
+            valueInput.value = String(fields[index].value);
+          });
+          configBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openFieldConfigPopup({
+              anchor: configBtn,
+              field: fields[index],
+              onSave: (next) => {
+                fields[index] = normalizeField({ ...next, id: fields[index].id });
+                paintFields();
+                reposition?.();
+              },
+            });
           });
           removeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -221,7 +272,7 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
             reposition?.();
           });
 
-          row.append(fieldName, typeBtn, valueInput, removeBtn);
+          row.append(fieldName, typeBtn, valueInput, configBtn, removeBtn);
           fieldsWrap.appendChild(row);
         });
         addBtn.disabled = fields.length >= MAX_FIELDS;
@@ -230,9 +281,19 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (fields.length >= MAX_FIELDS) return;
-        fields.push(defaultField(fields));
-        paintFields();
-        reposition?.();
+        openFieldLibraryPopup({
+          anchor: addBtn,
+          onBlank: () => {
+            fields.push(defaultField(fields));
+            paintFields();
+            reposition?.();
+          },
+          onPick: (def) => {
+            fields.push(fieldFromDef(def, fields));
+            paintFields();
+            reposition?.();
+          },
+        });
       });
 
       const errorEl = document.createElement("div");
@@ -246,7 +307,7 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
       actions.appendChild(confirm);
 
       paintFields();
-      body.append(nameRow, fieldsWrap, addBtn, errorEl, actions);
+      body.append(nameRow, notesArea, fieldsWrap, addBtn, errorEl, actions);
 
       async function submit() {
         const title = nameInput.value.trim();
@@ -262,6 +323,7 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           const typeEl = row.querySelector(".vp-field-type");
           const others = fields.filter((_, i) => i !== index);
           return normalizeField({
+            ...fields[index],
             name: nameEl?.value.trim() || defaultField(others).name,
             type: typeEl?.textContent,
             value: valueEl?.value,
@@ -269,7 +331,12 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
         });
         confirm.disabled = true;
         try {
-          const result = await updateValuePreset({ id: preset.id, name: title, fields: next });
+          const result = await updateValuePreset({
+            id: preset.id,
+            name: title,
+            notes: notesArea.value.trim(),
+            fields: next,
+          });
           if (result.conflicts?.length) {
             errorEl.textContent = `“${title}” already exists in this category`;
             return;
@@ -350,6 +417,40 @@ function folderExpanded(name, { query, openMap }) {
   return name === UNCATEGORISED;
 }
 
+function openPresetInfoPopup({ anchor, preset }) {
+  return openPopup({
+    nested: true,
+    anchor,
+    title: presetTitle(preset),
+    width: 300,
+    render(body) {
+      const count = document.createElement("div");
+      count.className = "sp-popup-message";
+      count.style.margin = "0";
+      count.textContent = fieldCountLabel(preset.fields);
+      body.appendChild(count);
+
+      if ((preset.fields || []).length) {
+        body.appendChild(makeFieldChips(preset.fields));
+      }
+
+      const notes = String(preset.notes || "").trim();
+      if (notes) {
+        const notesEl = document.createElement("div");
+        notesEl.className = "sp-preset-desc";
+        notesEl.style.marginTop = "8px";
+        notesEl.textContent = notes;
+        body.appendChild(notesEl);
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "sp-popup-message";
+        empty.textContent = "No notes";
+        body.appendChild(empty);
+      }
+    },
+  });
+}
+
 function makeItemRow(preset, { onEdit, onCopy, onMove, onDelete }) {
   const row = document.createElement("div");
   row.className = "sp-mgr-item";
@@ -361,11 +462,17 @@ function makeItemRow(preset, { onEdit, onCopy, onMove, onDelete }) {
   titleEl.className = "sp-mgr-item-name";
   titleEl.textContent = presetTitle(preset);
   titleRow.appendChild(titleEl);
-  info.append(titleRow, makeFieldChips(preset.fields));
+  const meta = document.createElement("div");
+  meta.className = "sp-mgr-item-meta";
+  meta.textContent = fieldCountLabel(preset.fields);
+  info.append(titleRow, meta);
 
   const actions = document.createElement("div");
   actions.className = "sp-mgr-item-actions";
   actions.append(
+    makeIconBtn("sp-mgr-icon-btn", "Preset details", INFO_ICON_SVG, (btn) => {
+      openPresetInfoPopup({ anchor: btn, preset });
+    }),
     makeIconBtn("sp-mgr-icon-btn", "Edit preset", EDIT_ICON_SVG, onEdit),
     makeIconBtn("sp-mgr-icon-btn", "Copy to category", COPY_ICON_SVG, onCopy),
     makeIconBtn("sp-mgr-icon-btn", "Move to category", MOVE_ICON_SVG, onMove),
@@ -379,7 +486,9 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
   listEl.replaceChildren();
   const q = query.trim().toLowerCase();
   const filtered = presets.filter((preset) => {
-    const haystack = [preset.name, preset.category, formatFields(preset.fields)].join(" ").toLowerCase();
+    const haystack = [preset.name, preset.notes, preset.category, formatFields(preset.fields)]
+      .join(" ")
+      .toLowerCase();
     return haystack.includes(q);
   });
 
@@ -503,6 +612,7 @@ function paintManagerList(listEl, { presets, categories, showEmpty, query, openM
                   const result = await saveValuePreset({
                     category: name,
                     name: preset.name,
+                    notes: preset.notes || "",
                     fields: preset.fields,
                   });
                   if (result.conflicts?.length) {
@@ -617,12 +727,24 @@ export function openValueManagerPopup({ anchor }) {
   return openPopup({
     anchor,
     title: "Value manager",
-    width: 380,
+    width: 400,
     render(body) {
+      const tabs = document.createElement("div");
+      tabs.className = "sp-mgr-tabs";
+      const presetsTab = document.createElement("button");
+      presetsTab.type = "button";
+      presetsTab.className = "sp-mgr-tab active";
+      presetsTab.textContent = "Presets";
+      const fieldsTab = document.createElement("button");
+      fieldsTab.type = "button";
+      fieldsTab.className = "sp-mgr-tab";
+      fieldsTab.textContent = "Fields";
+      tabs.append(presetsTab, fieldsTab);
+
       const search = document.createElement("input");
       search.className = "sp-popup-input";
       search.type = "text";
-      search.placeholder = "search name or field";
+      search.placeholder = "search presets";
 
       const emptyRow = document.createElement("div");
       emptyRow.className = "sp-toggle-row";
@@ -635,43 +757,100 @@ export function openValueManagerPopup({ anchor }) {
       emptyLabel.textContent = "Show empty categories";
       emptyRow.append(emptyToggle, emptyLabel);
 
+      const addFieldBtn = document.createElement("button");
+      addFieldBtn.type = "button";
+      addFieldBtn.className = "vp-add-btn";
+      addFieldBtn.style.display = "none";
+      addFieldBtn.innerHTML = `${PLUS_ICON_SVG}<span>New field</span>`;
+
       const status = document.createElement("div");
       status.className = "sp-popup-message";
       status.textContent = "Loading…";
       const list = document.createElement("div");
       list.className = "sp-preset-list sp-mgr-list";
-      body.append(search, emptyRow, status, list);
+      body.append(tabs, search, emptyRow, addFieldBtn, status, list);
 
+      let tab = "presets";
       let showEmpty = false;
       let presets = [];
       let categories = [];
+      let fieldDefs = [];
+      let fieldCategories = [];
       const openMap = new Map();
+      const fieldOpenMap = new Map();
+
+      function setTab(next) {
+        tab = next;
+        presetsTab.classList.toggle("active", tab === "presets");
+        fieldsTab.classList.toggle("active", tab === "fields");
+        emptyRow.style.display = "";
+        addFieldBtn.style.display = tab === "fields" ? "" : "none";
+        search.placeholder = tab === "presets" ? "search presets" : "search fields";
+        paint();
+      }
 
       function paint() {
-        paintManagerList(list, {
-          presets,
-          categories,
-          showEmpty,
-          query: search.value,
-          openMap,
-          reload: loadAll,
-        });
+        if (tab === "presets") {
+          paintManagerList(list, {
+            presets,
+            categories,
+            showEmpty,
+            query: search.value,
+            openMap,
+            reload: loadAll,
+          });
+        } else {
+          paintFieldsManagerList(list, {
+            fields: fieldDefs,
+            categories: fieldCategories,
+            showEmpty,
+            query: search.value,
+            openMap: fieldOpenMap,
+            reload: loadAll,
+          });
+        }
+      }
+
+      function afterFieldSaved(field) {
+        const cat = (field?.category || "").trim() || UNCATEGORISED;
+        fieldOpenMap.set(cat, true);
+        setTab("fields");
+        loadAll();
       }
 
       async function loadAll() {
         status.textContent = "Loading…";
         status.style.display = "";
-        const [presetResult, categoryResult] = await Promise.all([listValuePresets(), listValueCategories()]);
+        const [presetResult, categoryResult, fieldResult, fieldCatResult] = await Promise.all([
+          listValuePresets(),
+          listValueCategories(),
+          listValueFieldDefs(),
+          listValueFieldCategories(),
+        ]);
         if (!presetResult.ok) {
           status.textContent = presetResult.error || "Failed to load presets";
           return;
         }
+        if (!fieldResult.ok) {
+          status.textContent = fieldResult.error || "Failed to load fields";
+          return;
+        }
         presets = presetResult.presets || [];
         categories = categoryResult.categories || [];
+        fieldDefs = fieldResult.fields || [];
+        fieldCategories = fieldCatResult.categories || [];
         status.style.display = "none";
         paint();
       }
 
+      presetsTab.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setTab("presets");
+      });
+      fieldsTab.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setTab("fields");
+      });
       search.addEventListener("input", paint);
       emptyToggle.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -680,8 +859,191 @@ export function openValueManagerPopup({ anchor }) {
         emptyToggle.setAttribute("aria-checked", showEmpty ? "true" : "false");
         paint();
       });
+      addFieldBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openFieldDefEditor({
+          anchor: addFieldBtn,
+          categories: categoryNames(fieldCategories),
+          onSaved: afterFieldSaved,
+        });
+      });
 
       loadAll();
     },
   });
+}
+
+function paintFieldsManagerList(listEl, { fields, categories, showEmpty, query, openMap, reload }) {
+  listEl.replaceChildren();
+  const q = (query || "").trim().toLowerCase();
+  const filtered = (fields || []).filter((field) => {
+    const hay = [field.name, field.category, field.notes, field.type, formatFieldRange(field)]
+      .join(" ")
+      .toLowerCase();
+    return !q || hay.includes(q);
+  });
+
+  const grouped = new Map();
+  for (const field of filtered) {
+    const name = (field.category || "").trim() || UNCATEGORISED;
+    const list = grouped.get(name) || [];
+    list.push(field);
+    grouped.set(name, list);
+  }
+  for (const category of categories || []) {
+    const name = (category.name || "").trim();
+    if (!name || grouped.has(name)) continue;
+    if (showEmpty || q) grouped.set(name, []);
+  }
+
+  const names = [...grouped.keys()]
+    .filter((name) => {
+      const items = grouped.get(name) || [];
+      if (items.length) return true;
+      if (!showEmpty && !q) return false;
+      return name.toLowerCase() !== UNCATEGORISED.toLowerCase();
+    })
+    .sort((a, b) => {
+      const aUncat = a.toLowerCase() === UNCATEGORISED.toLowerCase();
+      const bUncat = b.toLowerCase() === UNCATEGORISED.toLowerCase();
+      if (aUncat !== bUncat) return aUncat ? -1 : 1;
+      return a.localeCompare(b, undefined, { sensitivity: "base" });
+    });
+
+  if (!names.length) {
+    const empty = document.createElement("div");
+    empty.className = "sp-popup-message";
+    empty.textContent = q ? "No fields" : "No field definitions yet.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const folderName of names) {
+    const items = grouped.get(folderName) || [];
+    const expanded = q ? true : openMap?.has(folderName) ? openMap.get(folderName) : folderName === UNCATEGORISED;
+    listEl.appendChild(
+      makeFolderSection({
+        title: folderName,
+        items,
+        expanded,
+        canManageFolder: folderName.toLowerCase() !== UNCATEGORISED.toLowerCase(),
+        onToggleExpand: (open) => openMap?.set(folderName, open),
+        onRenameFolder: (btn) => {
+          mgrInput({
+            anchor: btn,
+            title: "Rename category",
+            placeholder: "category name",
+            initialValue: folderName,
+            confirmLabel: "Rename",
+            validate: (value) => (!value.trim() ? "Name is required" : ""),
+            onSubmit: async (value) => {
+              const next = value.trim();
+              const result = await renameValueFieldCategory({ name: folderName, newName: next });
+              if (!result.ok) {
+                mgrConfirm({
+                  anchor: btn,
+                  title: "Rename category",
+                  message: result.error || "Rename failed",
+                  confirmLabel: "OK",
+                  showCancel: false,
+                  danger: false,
+                });
+                return;
+              }
+              if (openMap?.has(folderName)) {
+                openMap.set(next, openMap.get(folderName));
+                openMap.delete(folderName);
+              }
+              reload();
+            },
+          });
+        },
+        onDeleteFolder: (btn) => {
+          mgrConfirm({
+            anchor: btn,
+            title: "Delete category",
+            message: `Delete “${folderName}”? Fields move to Uncategorised.`,
+            confirmLabel: "Delete",
+            danger: true,
+            onConfirm: async () => {
+              const result = await deleteValueFieldCategory(folderName);
+              if (!result.ok) {
+                mgrConfirm({
+                  anchor: btn,
+                  title: "Delete category",
+                  message: result.error || "Delete failed",
+                  confirmLabel: "OK",
+                  showCancel: false,
+                  danger: false,
+                });
+                return;
+              }
+              reload();
+            },
+          });
+        },
+        renderItem: (field) => {
+          const row = document.createElement("div");
+          row.className = "sp-mgr-item";
+          const info = document.createElement("div");
+          info.className = "sp-mgr-item-info";
+          const title = document.createElement("div");
+          title.className = "sp-mgr-item-name";
+          title.textContent = field.name;
+          const meta = document.createElement("div");
+          meta.className = "sp-mgr-item-meta";
+          meta.textContent = formatFieldRange(field);
+          info.append(title, meta);
+          if (field.notes) {
+            const notes = document.createElement("div");
+            notes.className = "sp-mgr-item-meta";
+            notes.textContent = field.notes;
+            info.appendChild(notes);
+          }
+          const actions = document.createElement("div");
+          actions.className = "sp-mgr-item-actions";
+          actions.append(
+            makeIconBtn("sp-mgr-icon-btn", "Edit field", EDIT_ICON_SVG, (btn) => {
+              openFieldDefEditor({
+                anchor: btn,
+                field,
+                categories: categoryNames(categories),
+                onSaved: (saved) => {
+                  const cat = (saved?.category || "").trim() || UNCATEGORISED;
+                  openMap?.set(cat, true);
+                  reload();
+                },
+              });
+            }),
+            makeIconBtn("sp-mgr-icon-btn danger", "Delete", TRASH_ICON_SVG, (btn) => {
+              mgrConfirm({
+                anchor: btn,
+                title: "Delete field",
+                message: `Delete “${field.name}” from library?`,
+                confirmLabel: "Delete",
+                danger: true,
+                onConfirm: async () => {
+                  const result = await deleteValueFieldDef(field.id);
+                  if (!result.ok) {
+                    mgrConfirm({
+                      anchor: btn,
+                      title: "Delete field",
+                      message: result.error || "Delete failed",
+                      confirmLabel: "OK",
+                      showCancel: false,
+                      danger: false,
+                    });
+                    return;
+                  }
+                  reload();
+                },
+              });
+            }),
+          );
+          row.append(info, actions);
+          return row;
+        },
+      }),
+    );
+  }
 }

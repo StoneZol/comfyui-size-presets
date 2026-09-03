@@ -3,6 +3,7 @@
 ## 1.1.0 — 2026-09-03
 
 - **Value Presets** node: dynamic named fields with INT/FLOAT outputs
+- Field library with min / max / step limits for reuse
 - Separate value preset library tables in the same SQLite file
 - Load / Save / Manager for value presets (same UX pattern as sizes)
 

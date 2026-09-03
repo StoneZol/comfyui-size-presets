@@ -35,7 +35,9 @@ MIT — see [LICENSE](LICENSE)
 - **Typed outputs** — each field is an INT or FLOAT socket
 - **Same library UX** — Load / Save / Manager with categories
 - **Named presets** — unique `(category, name)`, no overwrite
-- **Edit in Manager** — rename, add/remove fields, change types and values
+- **Field library** — reusable defs with min / max / step, categories and notes
+- **Preset notes** — short description on save / in manager
+- **Edit in Manager** — Presets and Fields tabs; rename, add/remove, limits
 
 ---
 
@@ -135,3 +137,4 @@ comfyui-size-presets/
 | GET/PATCH/DELETE      | `/size_presets/categories`  | Size categories                  |
 | GET/POST/PATCH/DELETE | `/value_presets/presets`    | Value presets                    |
 | GET/PATCH/DELETE      | `/value_presets/categories` | Value categories                 |
+| GET/POST/PATCH/DELETE | `/value_presets/fields`     | Shared field definitions         |

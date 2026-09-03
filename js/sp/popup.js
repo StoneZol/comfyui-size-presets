@@ -618,12 +618,15 @@ const CSS = `
   box-sizing: border-box;
   font: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .sp-preset-item:hover {
   filter: brightness(1.12);
   border-color: #6d5aa8;
+}
+
+button.sp-preset-item {
+  cursor: pointer;
 }
 
 .sp-preset-head {
@@ -633,9 +636,26 @@ const CSS = `
   min-height: 28px;
 }
 
+.sp-preset-load-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .sp-preset-name {
   flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   font-size: 12px;
   line-height: 1.3;
   overflow: hidden;

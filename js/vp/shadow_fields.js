@@ -54,10 +54,12 @@ export function parseShadowFieldId(name) {
 }
 
 export function createShadowNumber(node, field) {
-  const step = field.type === "INT" ? 1 : 0.01;
+  const step = Number(field.step) > 0 ? Number(field.step) : field.type === "INT" ? 1 : 0.01;
+  const min = Number.isFinite(Number(field.min)) ? Number(field.min) : -1e12;
+  const max = Number.isFinite(Number(field.max)) ? Number(field.max) : 1e12;
   const widget = node.addWidget("number", shadowWidgetName(field.id), field.value, () => {}, {
-    min: -1e12,
-    max: 1e12,
+    min,
+    max,
     step,
     precision: field.type === "INT" ? 0 : 3,
   });
