@@ -129,6 +129,149 @@ const CSS = `
   max-height: 32px;
 }
 
+.vp-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vp-field-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vp-field-name {
+  flex: 1 1 72px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.vp-field-type {
+  flex: 0 0 48px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #252528);
+  color: var(--descrip-text, #bbb);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.vp-field-type.is-int {
+  border-color: #5a5080;
+  background: #2f2b3d;
+  color: #e0dce8;
+}
+
+.vp-field-value {
+  flex: 0 0 76px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.vp-field-remove {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--descrip-text, #888);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+
+.vp-field-remove:hover {
+  color: #e07070;
+  border-color: #7a3a3a;
+}
+
+.vp-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-color, #555);
+  background: transparent;
+  color: var(--descrip-text, #aaa);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.vp-add-btn:hover {
+  color: var(--input-text, #ddd);
+  border-color: #6d5aa8;
+}
+
+.vp-add-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.vp-add-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vp-field-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-menu-bg, #1e1e1e);
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--input-text, #ddd);
+}
+
+.vp-chip-type {
+  color: var(--descrip-text, #888);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 [data-testid="node-widget"]:has(.sp-root),
 .lg-node-widget:has(.sp-root),
 .comfy-widget-row:has(.sp-root) {

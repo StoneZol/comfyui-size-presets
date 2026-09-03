@@ -1,8 +1,8 @@
 # ComfyUI Size Presets
 
-**Save and load image sizes — width/height presets with categories.**
+**Save and load image sizes — and named INT/FLOAT values — with categories.**
 
-One node with native **width** and **height** inputs (pinnable in ComfyUI Favorites), four action buttons, and a local **SQLite library** for your common resolutions.
+Two nodes, one local **SQLite library**: classic **width/height** presets, plus dynamic **Value Presets** for any named numbers (cfg, steps, denoise, …) with the socket type you need.
 
 MIT — see [LICENSE](LICENSE)
 
@@ -22,12 +22,20 @@ MIT — see [LICENSE](LICENSE)
 
 ## Features
 
+### Size Presets
+
 - **Native width / height** — INT widgets you can pin and wire to Empty Latent Image, etc.
-- **Save preset** — snapshot current size into a category
-- **Load preset** — browse by category, search by size, click to apply
-- **Manager** — rename/delete categories, move or delete presets
-- **Switch size** — swap width ↔ height on the node
-- **Size = name** — `1024 × 768` is the preset identity (no extra naming)
+- **Save / Load / Manager** — categories, search, copy/move
+- **Switch size** — swap width ↔ height
+- **Size = identity** — `1024 × 768` (no extra naming)
+
+### Value Presets
+
+- **Dynamic fields** — name + INT/FLOAT + value (up to 16)
+- **Typed outputs** — each field is an INT or FLOAT socket
+- **Same library UX** — Load / Save / Manager with categories
+- **Named presets** — unique `(category, name)`, no overwrite
+- **Edit in Manager** — rename, add/remove fields, change types and values
 
 ---
 
@@ -41,13 +49,13 @@ MIT — see [LICENSE](LICENSE)
 
 2. Restart ComfyUI (or refresh the browser after a hot reload).
 
-3. Add node: **Size Presets**
+3. Add node: **Size Presets** or **Value Presets**
 
 No pip dependencies — Python 3.8+ stdlib + SQLite only.
 
 ---
 
-## Node layout
+## Size Presets layout
 
 ```
       │ width  ──→
@@ -59,16 +67,33 @@ height [____512____]
 [     Manager     ]
 ```
 
+## Value Presets layout
+
+```
+      │ cfg     ──→ FLOAT
+      │ steps   ──→ INT
+[ name ] [INT|FLOAT] [value] [×]
+[        Add field        ]
+[Load preset] [Save preset]
+[        Manager          ]
+```
+
 ---
 
 ## Quick start
 
-1. Add **Size Presets** to your graph.
-2. Set width and height (or connect inputs from other nodes).
-3. **Save preset** — adjust size if needed, pick a category, save.
-4. **Load preset** — pick a size from a category; values apply to the node.
-5. **Switch size** — flip portrait ↔ landscape without reloading.
-6. Connect **width** / **height** outputs to your latent or resize nodes.
+### Sizes
+
+1. Add **Size Presets**, set width/height (or connect inputs).
+2. **Save preset** → pick a category.
+3. **Load preset** → click a size card.
+4. Wire **width** / **height** to latent or resize nodes.
+
+### Values
+
+1. Add **Value Presets**.
+2. Add fields, name them, toggle **INT / FLOAT**, set values.
+3. Save/load like sizes; outputs match field types for FLOAT-only inputs.
 
 ---
 
@@ -76,9 +101,10 @@ height [____512____]
 
 Presets are stored in `db/presets.sqlite` (auto-created on first use).
 
-Each preset is uniquely identified by `(category, width, height)`. Saving a size that already exists in that category is rejected — no overwrite.
+- Sizes: unique `(category, width, height)`
+- Values: unique `(category, preset name)`
 
-Default uncategorised bucket: **Uncategorised**.
+Default bucket: **Uncategorised**. Size and value categories are separate tables.
 
 ---
 
@@ -86,21 +112,26 @@ Default uncategorised bucket: **Uncategorised**.
 
 ```
 comfyui-size-presets/
-├── nodes.py              # SizePresets node
+├── nodes.py              # SizePresets + ValuePresets
 ├── routes.py             # REST API
 ├── db/
-│   ├── db.py             # SQLite CRUD
+│   ├── db.py             # size tables + SQLite
+│   ├── values.py         # value preset CRUD
 │   └── presets.sqlite    # created at runtime
 └── js/
-    ├── size_presets.js   # Node UI entry
-    └── sp/               # Dialogs, API client, styles
+    ├── size_presets.js   # Size node UI
+    ├── value_presets.js  # Value node UI
+    ├── sp/               # Shared popups / size dialogs
+    └── vp/               # Value dialogs + API
 ```
 
 ---
 
 ## API routes
 
-| Method                | Path                       | Purpose                          |
-| --------------------- | -------------------------- | -------------------------------- |
-| GET/POST/PATCH/DELETE | `/size_presets/sizes`      | List, save, move, delete presets |
-| GET/PATCH/DELETE      | `/size_presets/categories` | List, rename, delete categories  |
+| Method                | Path                        | Purpose                          |
+| --------------------- | --------------------------- | -------------------------------- |
+| GET/POST/PATCH/DELETE | `/size_presets/sizes`       | Size presets                     |
+| GET/PATCH/DELETE      | `/size_presets/categories`  | Size categories                  |
+| GET/POST/PATCH/DELETE | `/value_presets/presets`    | Value presets                    |
+| GET/PATCH/DELETE      | `/value_presets/categories` | Value categories                 |

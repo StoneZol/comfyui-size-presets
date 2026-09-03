@@ -7,7 +7,8 @@ import sqlite3
 import threading
 from typing import Dict, List, Optional, Tuple
 
-_lock = threading.Lock()
+lock = threading.Lock()
+_lock = lock
 
 UNCATEGORISED_NAME = "Uncategorised"
 
@@ -47,9 +48,40 @@ def _migrate(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(category_id, width, height)
         );
+
+        CREATE TABLE IF NOT EXISTS value_categories (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL COLLATE NOCASE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(name)
+        );
+
+        CREATE TABLE IF NOT EXISTS value_presets (
+            id INTEGER PRIMARY KEY,
+            category_id INTEGER REFERENCES value_categories(id) ON DELETE CASCADE,
+            name TEXT NOT NULL DEFAULT '',
+            fields_json TEXT NOT NULL,
+            fields_key TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_size_presets_category ON size_presets(category_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_presets_category ON value_presets(category_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_presets_key ON value_presets(category_id, fields_key)")
+    _migrate_value_preset_names(conn)
+
+
+def _migrate_value_preset_names(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(value_presets)").fetchall()}
+    if "name" not in columns:
+        conn.execute("ALTER TABLE value_presets ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+    for row in conn.execute("SELECT id, name FROM value_presets").fetchall():
+        title = (row["name"] or "").strip()
+        if title:
+            continue
+        conn.execute("UPDATE value_presets SET name = ? WHERE id = ?", (f"Preset {int(row['id'])}", int(row["id"])))
 
 
 def init_db() -> None:
