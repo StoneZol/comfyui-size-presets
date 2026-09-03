@@ -2,9 +2,22 @@ export const MAX_FIELDS = 16;
 
 export function selectOnFocus(input) {
   input.addEventListener("focus", () => {
-    requestAnimationFrame(() => input.select());
+    requestAnimationFrame(() => {
+      if (document.activeElement === input) input.select();
+    });
   });
-  input.addEventListener("mouseup", (e) => e.preventDefault());
+  // mouseup.preventDefault keeps text selection, but breaks number spinner arrows
+  // (one click becomes a burst of steps while the node is selected).
+  if (input.type !== "number") {
+    input.addEventListener("mouseup", (e) => e.preventDefault());
+  }
+}
+
+/** Stop LiteGraph/Comfy from treating widget clicks as canvas drags. */
+export function isolatePointer(el) {
+  for (const type of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) {
+    el.addEventListener(type, (e) => e.stopPropagation(), type === "wheel" ? { passive: true } : undefined);
+  }
 }
 
 export function newFieldId() {

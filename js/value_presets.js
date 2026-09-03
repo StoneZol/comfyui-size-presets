@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { injectStyles } from "./sp/styles.js";
 import { LOAD_ICON_SVG, PLUS_ICON_SVG, SAVE_ICON_SVG } from "./sp/icons.js";
-import { defaultField, fieldsJson, MAX_FIELDS, parseFields, selectOnFocus } from "./vp/fields.js";
+import { defaultField, fieldsJson, isolatePointer, MAX_FIELDS, parseFields, selectOnFocus } from "./vp/fields.js";
 import { openSaveValuePopup } from "./vp/save_dialog.js";
 import { openLoadValuePopup } from "./vp/load_dialog.js";
 import { openValueManagerPopup } from "./vp/manager_dialog.js";
@@ -87,10 +87,12 @@ app.registerExtension({
 
       root.append(fieldsWrap, addBtn, libraryRow, managerBtn);
 
-      function persist() {
+      function persist({ light = false } = {}) {
         if (!dataWidget) return;
         dataWidget.value = fieldsJson(fields);
-        node.setDirtyCanvas(true, true);
+        // Full dirty redraw remounts Vue widgets under a held mouse button and
+        // turns one spinner click into a burst of steps.
+        node.setDirtyCanvas(true, !light);
       }
 
       function collectFromShadows() {
@@ -116,7 +118,7 @@ app.registerExtension({
           if (syncing) return;
           const number = Number(widget.value);
           field.value = Number.isFinite(number) ? (field.type === "INT" ? Math.round(number) : number) : 0;
-          persist();
+          persist({ light: true });
           syncOutputs();
           const input = fieldsWrap.querySelector(`[data-vp-id="${field.id}"] .vp-field-value`);
           if (input && input !== document.activeElement) input.value = String(field.value);
@@ -255,6 +257,8 @@ app.registerExtension({
           valueInput.step = field.type === "INT" ? "1" : "0.01";
           valueInput.value = String(field.value);
           selectOnFocus(valueInput);
+          isolatePointer(valueInput);
+          isolatePointer(nameInput);
 
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
@@ -282,9 +286,13 @@ app.registerExtension({
           valueInput.addEventListener("change", () => {
             const number = Number(valueInput.value);
             field.value = Number.isFinite(number) ? (field.type === "INT" ? Math.round(number) : number) : 0;
-            persist();
+            persist({ light: true });
             writeShadow(field);
             syncOutputs();
+          });
+          valueInput.addEventListener("keydown", (e) => {
+            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+            e.stopPropagation();
           });
           removeBtn.addEventListener("click", (e) => {
             e.stopPropagation();

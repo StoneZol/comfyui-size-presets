@@ -189,6 +189,15 @@ const CSS = `
   font-family: inherit;
   font-size: 12px;
   box-sizing: border-box;
+  /* Native spinner arrows fight with node selection / pointer routing. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vp-field-value::-webkit-outer-spin-button,
+.vp-field-value::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .vp-field-remove {

@@ -10,7 +10,7 @@ import {
   saveValuePreset,
   updateValuePreset,
 } from "./api.js";
-import { defaultField, formatFields, makeFieldChips, MAX_FIELDS, normalizeField, presetTitle, selectOnFocus } from "./fields.js";
+import { defaultField, formatFields, isolatePointer, makeFieldChips, MAX_FIELDS, normalizeField, presetTitle, selectOnFocus } from "./fields.js";
 
 const UNCATEGORISED = "Uncategorised";
 
@@ -185,6 +185,8 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           valueInput.step = field.type === "INT" ? "1" : "0.01";
           valueInput.value = String(field.value);
           selectOnFocus(valueInput);
+          isolatePointer(valueInput);
+          isolatePointer(fieldName);
 
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
