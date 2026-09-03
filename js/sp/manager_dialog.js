@@ -95,7 +95,7 @@ function openCategoryPicker({ anchor, title = "Category", categories, current, o
       const filter = document.createElement("input");
       filter.className = "sp-popup-input";
       filter.type = "text";
-      filter.placeholder = "filter";
+      filter.placeholder = "filter or new name";
 
       const list = document.createElement("div");
       list.className = "sp-pick-list";
@@ -103,10 +103,38 @@ function openCategoryPicker({ anchor, title = "Category", categories, current, o
       const items = ["", ...categories.filter((n) => n.toLowerCase() !== UNCATEGORISED.toLowerCase())];
       const selected = (current || "").trim();
 
+      function pick(name) {
+        close();
+        onPick?.(name);
+      }
+
       function paint() {
-        const q = filter.value.trim().toLowerCase();
+        const typed = filter.value.trim();
+        const q = typed.toLowerCase();
         list.replaceChildren();
         const shown = items.filter((name) => matchesQuery(name || UNCATEGORISED, q));
+        const exactMatch = typed && items.some((name) => (name || "").toLowerCase() === q);
+
+        if (typed && !exactMatch) {
+          const createBtn = document.createElement("button");
+          createBtn.type = "button";
+          createBtn.className = "sp-pick-item selected";
+          createBtn.textContent = `Use “${typed}”`;
+          createBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            pick(typed);
+          });
+          list.appendChild(createBtn);
+        }
+
+        if (!shown.length && !typed) {
+          const empty = document.createElement("div");
+          empty.className = "sp-popup-message";
+          empty.textContent = "No categories yet";
+          list.appendChild(empty);
+          return;
+        }
+
         for (const name of shown) {
           const btn = document.createElement("button");
           btn.type = "button";
@@ -115,14 +143,21 @@ function openCategoryPicker({ anchor, title = "Category", categories, current, o
           if ((name || "") === selected) btn.classList.add("selected");
           btn.addEventListener("click", (e) => {
             e.stopPropagation();
-            close();
-            onPick?.(name);
+            pick(name);
           });
           list.appendChild(btn);
         }
       }
 
       filter.addEventListener("input", paint);
+      filter.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const typed = filter.value.trim();
+        if (!typed) return;
+        const exact = items.find((name) => (name || "").toLowerCase() === typed.toLowerCase());
+        pick(exact !== undefined ? exact : typed);
+      });
       paint();
       body.append(filter, list);
       requestAnimationFrame(() => filter.focus());

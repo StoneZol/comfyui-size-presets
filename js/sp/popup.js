@@ -7,6 +7,7 @@ const CSS = `
   min-width: 240px;
   max-width: min(420px, calc(100vw - 16px));
   max-height: min(70vh, 560px);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -715,6 +716,8 @@ const popupStack = [];
 function placePopup(el, { anchor, position, centered, pinTop }) {
     const margin = 8;
     const gap = 4;
+    const minVisible = 160;
+    const cssMaxH = Math.min(Math.round(window.innerHeight * 0.7), 560);
     let x = position?.x ?? margin;
     let y = position?.y ?? margin;
     let anchorRect = null;
@@ -727,6 +730,7 @@ function placePopup(el, { anchor, position, centered, pinTop }) {
         document.body.appendChild(el);
     }
 
+    el.style.maxHeight = `${cssMaxH}px`;
     const box = el.getBoundingClientRect();
     if (pinTop != null) {
         y = pinTop;
@@ -750,13 +754,15 @@ function placePopup(el, { anchor, position, centered, pinTop }) {
     }
 
     const maxX = Math.max(margin, window.innerWidth - box.width - margin);
-    el.style.left = `${Math.max(margin, Math.min(x, maxX))}px`;
-    if (pinTop != null) {
-        el.style.top = `${pinTop}px`;
-    } else {
-        const maxY = Math.max(margin, window.innerHeight - box.height - margin);
-        el.style.top = `${Math.max(margin, Math.min(y, maxY))}px`;
+    const viewportBottom = window.innerHeight - margin;
+    let spaceBelow = viewportBottom - y;
+    if (spaceBelow < minVisible) {
+        y = Math.max(margin, viewportBottom - Math.max(minVisible, Math.min(box.height, cssMaxH)));
+        spaceBelow = viewportBottom - y;
     }
+    el.style.maxHeight = `${Math.max(minVisible, Math.min(cssMaxH, spaceBelow))}px`;
+    el.style.left = `${Math.max(margin, Math.min(x, maxX))}px`;
+    el.style.top = `${Math.max(margin, y)}px`;
     el.style.visibility = "visible";
 }
 
@@ -823,7 +829,7 @@ export function openPopup(opts) {
             ...placementOpts,
             pinTop: !opts.centered && pinnedTop != null ? pinnedTop : undefined,
         });
-        if (!opts.centered && pinnedTop == null) {
+        if (!opts.centered) {
             const top = parseFloat(root.style.top);
             if (Number.isFinite(top)) pinnedTop = top;
         }
