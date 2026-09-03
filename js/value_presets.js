@@ -3,22 +3,28 @@ import { injectStyles } from "./sp/styles.js";
 import { GEAR_ICON_SVG, LOAD_ICON_SVG, PLUS_ICON_SVG, SAVE_ICON_SVG } from "./sp/icons.js";
 import {
   clampValue,
+  coerceBool,
   defaultField,
   dropItemById,
   fieldFromDef,
   fieldsJson,
+  formatStringList,
   isolatePointer,
+  isNumericType,
   makeFieldOrderControls,
+  makeTypeBadge,
   MAX_FIELDS,
   moveItemToIndex,
   normalizeField,
   parseFields,
+  parseStringList,
   selectOnFocus,
+  socketType,
 } from "./vp/fields.js";
 import { openSaveValuePopup } from "./vp/save_dialog.js";
 import { openLoadValuePopup } from "./vp/load_dialog.js";
 import { openValueManagerPopup } from "./vp/manager_dialog.js";
-import { openFieldConfigPopup, openFieldLibraryPopup } from "./vp/field_config.js";
+import { openFieldConfigPopup, openFieldLibraryPopup, openFieldTypePicker } from "./vp/field_config.js";
 import { getSearchInFields, setSearchInFields } from "./vp/prefs.js";
 import {
   createShadowNumber,
@@ -119,7 +125,7 @@ app.registerExtension({
           const id = parseShadowFieldId(widget.name);
           if (!id) continue;
           const field = fields.find((item) => item.id === id);
-          if (!field) continue;
+          if (!field || !isNumericType(field.type)) continue;
           const number = Number(widget.value);
           if (!Number.isFinite(number)) continue;
           field.value = clampValue(number, field.type, field.min, field.max);
@@ -135,6 +141,7 @@ app.registerExtension({
         widget.callback = function () {
           prev?.apply(this, arguments);
           if (syncing) return;
+          if (!isNumericType(field.type)) return;
           const number = Number(widget.value);
           field.value = clampValue(number, field.type, field.min, field.max);
           persist({ light: true });
@@ -145,6 +152,7 @@ app.registerExtension({
       }
 
       function addShadow(field) {
+        if (!isNumericType(field.type)) return;
         const widget = createShadowNumber(node, field);
         bindShadow(widget, field);
         hideOnCanvasKeepInPanel(widget);
@@ -168,6 +176,7 @@ app.registerExtension({
       }
 
       function writeShadow(field) {
+        if (!isNumericType(field.type)) return;
         const widget = findShadow(field.id);
         if (!widget) return;
         syncing = true;
@@ -190,7 +199,7 @@ app.registerExtension({
           node.removeOutput(node.outputs.length - 1);
         }
         fields.forEach((field, i) => {
-          const type = field.type === "INT" ? "INT" : "FLOAT";
+          const type = socketType(field.type);
           const name = field.name || `v${i + 1}`;
           if (i >= (node.outputs?.length || 0)) {
             node.addOutput(name, type);
@@ -275,28 +284,70 @@ app.registerExtension({
           nameInput.value = field.name;
           nameInput.maxLength = 40;
 
-          const typeBtn = document.createElement("button");
-          typeBtn.type = "button";
-          typeBtn.className = `vp-field-type${field.type === "INT" ? " is-int" : ""}`;
-          typeBtn.textContent = field.type;
-          typeBtn.title = "Toggle INT / FLOAT";
+          const typeBadge = makeTypeBadge(field.type);
 
-          const valueInput = document.createElement("input");
-          valueInput.className = "vp-field-value";
-          valueInput.type = "number";
-          valueInput.min = String(field.min);
-          valueInput.max = String(field.max);
-          valueInput.step = String(field.step);
-          valueInput.value = String(field.value);
-          valueInput.title = `${field.min} … ${field.max} · step ${field.step}`;
-          selectOnFocus(valueInput);
-          isolatePointer(valueInput);
-          isolatePointer(nameInput);
+          let valueControl;
+          if (field.type === "BOOLEAN") {
+            valueControl = document.createElement("div");
+            valueControl.className = "sp-toggle vp-field-bool";
+            valueControl.setAttribute("role", "switch");
+            valueControl.setAttribute("aria-checked", field.value ? "true" : "false");
+            if (field.value) valueControl.classList.add("on");
+            valueControl.appendChild(Object.assign(document.createElement("div"), { className: "sp-toggle-knob" }));
+            valueControl.title = field.value ? "true" : "false";
+            isolatePointer(valueControl);
+            valueControl.addEventListener("click", (e) => {
+              e.stopPropagation();
+              field.value = !coerceBool(field.value);
+              valueControl.classList.toggle("on", field.value);
+              valueControl.setAttribute("aria-checked", field.value ? "true" : "false");
+              valueControl.title = field.value ? "true" : "false";
+              persist({ light: true });
+              syncOutputs();
+            });
+          } else if (field.type === "STRING") {
+            valueControl = document.createElement("input");
+            valueControl.className = "vp-field-value vp-field-value-string";
+            valueControl.type = "text";
+            valueControl.placeholder = "a, b, c";
+            valueControl.value = formatStringList(field.value);
+            valueControl.title = "Comma-separated values";
+            selectOnFocus(valueControl);
+            isolatePointer(valueControl);
+            valueControl.addEventListener("change", () => {
+              field.value = parseStringList(valueControl.value);
+              valueControl.value = formatStringList(field.value);
+              persist({ light: true });
+              syncOutputs();
+            });
+          } else {
+            valueControl = document.createElement("input");
+            valueControl.className = "vp-field-value";
+            valueControl.type = "number";
+            valueControl.min = String(field.min);
+            valueControl.max = String(field.max);
+            valueControl.step = String(field.step);
+            valueControl.value = String(field.value);
+            valueControl.title = `${field.min} … ${field.max} · step ${field.step}`;
+            selectOnFocus(valueControl);
+            isolatePointer(valueControl);
+            valueControl.addEventListener("change", () => {
+              field.value = clampValue(valueControl.value, field.type, field.min, field.max);
+              valueControl.value = String(field.value);
+              persist({ light: true });
+              writeShadow(field);
+              syncOutputs();
+            });
+            valueControl.addEventListener("keydown", (e) => {
+              if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+              e.stopPropagation();
+            });
+          }
 
           const configBtn = document.createElement("button");
           configBtn.type = "button";
           configBtn.className = "vp-field-config";
-          configBtn.title = "Limits & library";
+          configBtn.title = field.type === "BOOLEAN" || field.type === "STRING" ? "Library & notes" : "Limits & library";
           configBtn.innerHTML = GEAR_ICON_SVG;
 
           const removeBtn = document.createElement("button");
@@ -327,6 +378,7 @@ app.registerExtension({
             },
           });
 
+          isolatePointer(nameInput);
           nameInput.addEventListener("change", () => {
             field.name =
               nameInput.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
@@ -335,29 +387,6 @@ app.registerExtension({
             syncOutputs();
             paint();
           });
-          typeBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            fields[index] = normalizeField({
-              ...field,
-              type: field.type === "INT" ? "FLOAT" : "INT",
-              step: field.type === "INT" ? 0.01 : 1,
-            });
-            persist();
-            rebuildShadows();
-            syncOutputs();
-            paint();
-          });
-          valueInput.addEventListener("change", () => {
-            field.value = clampValue(valueInput.value, field.type, field.min, field.max);
-            valueInput.value = String(field.value);
-            persist({ light: true });
-            writeShadow(field);
-            syncOutputs();
-          });
-          valueInput.addEventListener("keydown", (e) => {
-            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-            e.stopPropagation();
-          });
           configBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             openFieldConfigPopup({
@@ -365,7 +394,7 @@ app.registerExtension({
               field,
               nested: false,
               onSave: (next) => {
-                fields[index] = normalizeField({ ...next, id: field.id });
+                fields[index] = normalizeField({ ...next, id: field.id, type: field.type });
                 persist();
                 rebuildShadows();
                 syncOutputs();
@@ -383,7 +412,7 @@ app.registerExtension({
             paint();
           });
 
-          row.append(order.dragHandle, order.pos, nameInput, typeBtn, valueInput, configBtn, removeBtn);
+          row.append(order.dragHandle, order.pos, nameInput, typeBadge, valueControl, configBtn, removeBtn);
           order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
@@ -397,7 +426,12 @@ app.registerExtension({
         if (fields.length >= MAX_FIELDS) return;
         openFieldLibraryPopup({
           anchor: addBtn,
-          onBlank: () => addFieldInstance(defaultField(fields)),
+          onBlank: () => {
+            openFieldTypePicker({
+              anchor: addBtn,
+              onPick: (type) => addFieldInstance(defaultField(fields, type)),
+            });
+          },
           onPick: (def) => addFieldInstance(fieldFromDef(def, fields)),
         });
       });

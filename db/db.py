@@ -83,6 +83,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             max_value REAL,
             step_value REAL,
             default_value REAL NOT NULL DEFAULT 0,
+            default_json TEXT,
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -115,6 +116,8 @@ def _migrate_value_extras(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE value_field_defs ADD COLUMN category_id INTEGER REFERENCES value_field_categories(id) ON DELETE SET NULL")
     if "notes" not in field_cols:
         conn.execute("ALTER TABLE value_field_defs ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    if "default_json" not in field_cols:
+        conn.execute("ALTER TABLE value_field_defs ADD COLUMN default_json TEXT")
     # Old wide-open mins were -1e9; clamp defaults to 0 for new UX.
     conn.execute(
         """

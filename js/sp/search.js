@@ -90,7 +90,10 @@ export function matchesValuePreset(
   if (includeFields) {
     bits.push(
       (preset?.fields || [])
-        .map((field) => `${field?.name || ""} ${field?.label || ""} ${field?.value ?? ""} ${field?.type || ""}`)
+        .map((field) => {
+          const value = Array.isArray(field?.value) ? field.value.join(" ") : field?.value ?? "";
+          return `${field?.name || ""} ${field?.label || ""} ${value} ${field?.type || ""}`;
+        })
         .join(" "),
     );
   }
@@ -107,7 +110,9 @@ export function matchesValueField(field, rawQuery, { emptyFolder = "Uncategorise
   if (shelf && !category.toLowerCase().includes(shelf)) return false;
   if (!tokens.length) return true;
 
-  const range = `${field?.min ?? ""} ${field?.max ?? ""} ${field?.step ?? ""} ${field?.default ?? ""}`;
+  const range = Array.isArray(field?.default)
+    ? field.default.join(" ")
+    : `${field?.min ?? ""} ${field?.max ?? ""} ${field?.step ?? ""} ${field?.default ?? ""}`;
   const fields = hasShelfFilter
     ? [field?.name, field?.label, field?.notes, field?.type, range]
     : [category, field?.name, field?.label, field?.notes, field?.type, range];

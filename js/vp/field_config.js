@@ -9,13 +9,21 @@ import {
   upsertValueFieldDef,
 } from "./api.js";
 import {
+  coerceBool,
   DEFAULT_MAX,
   DEFAULT_MIN,
   defaultStep,
+  FIELD_TYPES,
   formatFieldRange,
+  formatStringList,
   isolatePointer,
+  isNumericType,
+  makeTypeBadge,
   normalizeField,
+  normalizeType,
+  parseStringList,
   selectOnFocus,
+  typeBadgeClass,
 } from "./fields.js";
 
 const UNCATEGORISED = "Uncategorised";
@@ -201,6 +209,46 @@ function makeTextRow(labelText, value, { placeholder = "", multiline = false } =
   return { row, input };
 }
 
+/** One-shot type pick when creating a blank field. */
+export function openFieldTypePicker({ anchor, onPick, nested = true }) {
+  return openPopup({
+    nested,
+    anchor,
+    title: "Field type",
+    width: 240,
+    render(body, { close }) {
+      const hint = document.createElement("div");
+      hint.className = "sp-popup-message";
+      hint.style.margin = "0 0 6px";
+      hint.textContent = "Type cannot be changed later";
+      body.appendChild(hint);
+
+      const list = document.createElement("div");
+      list.className = "sp-pick-list";
+      for (const typ of FIELD_TYPES) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "sp-pick-item";
+        const badge = makeTypeBadge(typ, { title: typ });
+        badge.style.pointerEvents = "none";
+        const label = document.createElement("span");
+        label.textContent = typ === "BOOLEAN" ? "BOOLEAN" : typ;
+        btn.append(badge, label);
+        btn.style.display = "flex";
+        btn.style.alignItems = "center";
+        btn.style.gap = "8px";
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          close();
+          onPick?.(typ);
+        });
+        list.appendChild(btn);
+      }
+      body.appendChild(list);
+    },
+  });
+}
+
 /** Edit limits on a node field; optional save into the shared library. */
 export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
   return openPopup({
@@ -211,21 +259,24 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
     render(body, { close }) {
       let draft = normalizeField(field);
       let categories = [];
+      const numeric = isNumericType(draft.type);
 
       const typeRow = document.createElement("div");
       typeRow.className = "sp-size-row";
       typeRow.append(
         Object.assign(document.createElement("label"), { textContent: "Type" }),
-        Object.assign(document.createElement("div"), {
-          className: "sp-popup-message",
-          textContent: draft.type,
-          style: "margin:0;padding:0;",
-        }),
+        makeTypeBadge(draft.type),
       );
 
       const minField = makeBoundRow("Min", draft.min, draft.step);
       const maxField = makeBoundRow("Max", draft.max, draft.step);
       const stepField = makeBoundRow("Step", draft.step, draft.type === "INT" ? 1 : 0.01);
+      if (!numeric) {
+        minField.row.style.display = "none";
+        maxField.row.style.display = "none";
+        stepField.row.style.display = "none";
+      }
+
       const categoryRow = makeCategoryRow(draft.category || "");
       wireCategoryPicker(categoryRow.pickBtn, categoryRow.input, () => categories);
       const notesRow = makeTextRow("Notes", draft.notes || "", { placeholder: "optional note", multiline: true });
@@ -249,23 +300,34 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
       apply.textContent = "Apply only";
 
       function readDraft() {
-        const min = Number(minField.input.value);
-        const max = Number(maxField.input.value);
-        const step = Number(stepField.input.value);
-        if (![min, max, step].every(Number.isFinite) || step <= 0) {
-          errorEl.className = "sp-popup-error";
-          errorEl.textContent = "Enter valid min / max / step";
-          return null;
+        if (numeric) {
+          const min = Number(minField.input.value);
+          const max = Number(maxField.input.value);
+          const step = Number(stepField.input.value);
+          if (![min, max, step].every(Number.isFinite) || step <= 0) {
+            errorEl.className = "sp-popup-error";
+            errorEl.textContent = "Enter valid min / max / step";
+            return null;
+          }
+          draft = normalizeField({
+            ...draft,
+            type: draft.type,
+            min,
+            max,
+            step,
+            value: draft.value,
+            category: categoryRow.input.value.trim(),
+            notes: notesRow.input.value.trim(),
+          });
+        } else {
+          draft = normalizeField({
+            ...draft,
+            type: draft.type,
+            value: draft.value,
+            category: categoryRow.input.value.trim(),
+            notes: notesRow.input.value.trim(),
+          });
         }
-        draft = normalizeField({
-          ...draft,
-          min,
-          max,
-          step,
-          value: draft.value,
-          category: categoryRow.input.value.trim(),
-          notes: notesRow.input.value.trim(),
-        });
         return draft;
       }
 
@@ -305,6 +367,7 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
           }
           const saved = normalizeField({
             ...next,
+            type: next.type,
             category: result.field?.category ?? next.category,
             notes: result.field?.notes ?? next.notes,
           });
@@ -333,7 +396,6 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
         actions,
       );
 
-      // Enrich from library when the preset slot has no shelf metadata yet.
       Promise.all([listValueFieldDefs(), listValueFieldCategories()])
         .then(([defsResult, catsResult]) => {
           categories = (catsResult.categories || []).map((c) => c.name).filter(Boolean);
@@ -352,7 +414,7 @@ export function openFieldConfigPopup({ anchor, field, onSave, nested = true }) {
           }
         })
         .catch(() => {});
-      requestAnimationFrame(() => minField.input.focus());
+      requestAnimationFrame(() => (numeric ? minField.input : notesRow.input).focus());
     },
   });
 }
@@ -367,23 +429,33 @@ export function openFieldDefEditor({ anchor, field = null, categories = [], onSa
     width: 320,
     render(body, { close }) {
       const nameRow = makeTextRow("Name", field?.name || "", { placeholder: "denoise" });
-      const typeBtn = document.createElement("button");
-      typeBtn.type = "button";
-      typeBtn.className = `vp-field-type${(field?.type || "FLOAT") === "INT" ? " is-int" : ""}`;
-      typeBtn.textContent = field?.type === "INT" ? "INT" : "FLOAT";
-      typeBtn.title = "Toggle INT / FLOAT";
+
+      let typ = normalizeType(field?.type || "FLOAT");
       const typeRow = document.createElement("div");
       typeRow.className = "sp-size-row";
-      typeRow.append(Object.assign(document.createElement("label"), { textContent: "Type" }), typeBtn);
-
-      let typ = field?.type === "INT" ? "INT" : "FLOAT";
-      typeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        typ = typ === "INT" ? "FLOAT" : "INT";
+      const typeLabel = Object.assign(document.createElement("label"), { textContent: "Type" });
+      let typeControl;
+      if (editing) {
+        typeControl = makeTypeBadge(typ);
+      } else {
+        typeControl = document.createElement("div");
+        typeControl.className = "vp-type-cycle";
+        const typeBtn = document.createElement("button");
+        typeBtn.type = "button";
+        typeBtn.className = typeBadgeClass(typ);
         typeBtn.textContent = typ;
-        typeBtn.classList.toggle("is-int", typ === "INT");
-        stepField.input.step = typ === "INT" ? "1" : "0.01";
-      });
+        typeBtn.title = "Cycle type (fixed after save)";
+        typeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const idx = FIELD_TYPES.indexOf(typ);
+          typ = FIELD_TYPES[(idx + 1) % FIELD_TYPES.length];
+          typeBtn.textContent = typ;
+          typeBtn.className = typeBadgeClass(typ);
+          syncTypeUi();
+        });
+        typeControl.appendChild(typeBtn);
+      }
+      typeRow.append(typeLabel, typeControl);
 
       const minField = makeBoundRow("Min", field?.min ?? DEFAULT_MIN, field?.step ?? 0.01);
       const maxField = makeBoundRow("Max", field?.max ?? DEFAULT_MAX, field?.step ?? 0.01);
@@ -392,7 +464,49 @@ export function openFieldDefEditor({ anchor, field = null, categories = [], onSa
         field?.step ?? defaultStep(typ),
         typ === "INT" ? 1 : 0.01,
       );
-      const defaultField = makeBoundRow("Default", field?.default ?? field?.value ?? 0, field?.step ?? 0.01);
+
+      const defaultNum = makeBoundRow("Default", field?.default ?? field?.value ?? 0, field?.step ?? 0.01);
+      const defaultStr = makeTextRow("Default", formatStringList(field?.default ?? field?.value ?? ""), {
+        placeholder: "a, b, c",
+      });
+      const defaultBoolRow = document.createElement("div");
+      defaultBoolRow.className = "sp-toggle-row";
+      let defaultBool = coerceBool(field?.default ?? field?.value ?? false);
+      const boolToggle = document.createElement("div");
+      boolToggle.className = "sp-toggle";
+      boolToggle.setAttribute("role", "switch");
+      boolToggle.appendChild(Object.assign(document.createElement("div"), { className: "sp-toggle-knob" }));
+      const boolLabel = document.createElement("span");
+      boolLabel.textContent = "Default";
+      defaultBoolRow.append(boolToggle, boolLabel);
+      function syncBool() {
+        boolToggle.classList.toggle("on", defaultBool);
+        boolToggle.setAttribute("aria-checked", defaultBool ? "true" : "false");
+      }
+      syncBool();
+      const flipBool = (e) => {
+        e.stopPropagation();
+        defaultBool = !defaultBool;
+        syncBool();
+      };
+      boolToggle.addEventListener("click", flipBool);
+      boolLabel.addEventListener("click", flipBool);
+
+      function syncTypeUi() {
+        const numeric = isNumericType(typ);
+        minField.row.style.display = numeric ? "" : "none";
+        maxField.row.style.display = numeric ? "" : "none";
+        stepField.row.style.display = numeric ? "" : "none";
+        defaultNum.row.style.display = numeric ? "" : "none";
+        defaultStr.row.style.display = typ === "STRING" ? "" : "none";
+        defaultBoolRow.style.display = typ === "BOOLEAN" ? "" : "none";
+        if (numeric) {
+          stepField.input.step = typ === "INT" ? "1" : "0.01";
+          defaultNum.input.step = typ === "INT" ? "1" : "0.01";
+        }
+      }
+      syncTypeUi();
+
       const categoryRow = makeCategoryRow(field?.category || "");
       wireCategoryPicker(categoryRow.pickBtn, categoryRow.input, () => categories || []);
       const notesRow = makeTextRow("Notes", field?.notes || "", {
@@ -417,20 +531,38 @@ export function openFieldDefEditor({ anchor, field = null, categories = [], onSa
           errorEl.textContent = "Name is required";
           return;
         }
-        const payload = {
+        let payload = {
           id: field?.id,
           name,
           type: typ,
-          min: Number(minField.input.value),
-          max: Number(maxField.input.value),
-          step: Number(stepField.input.value),
-          default: Number(defaultField.input.value),
           category: categoryRow.input.value.trim(),
           notes: notesRow.input.value.trim(),
         };
-        if (![payload.min, payload.max, payload.step, payload.default].every(Number.isFinite) || payload.step <= 0) {
-          errorEl.textContent = "Enter valid numbers";
-          return;
+        if (typ === "BOOLEAN") {
+          payload = { ...payload, min: 0, max: 1, step: 1, default: defaultBool };
+        } else if (typ === "STRING") {
+          payload = {
+            ...payload,
+            min: 0,
+            max: 0,
+            step: 1,
+            default: parseStringList(defaultStr.input.value),
+          };
+        } else {
+          payload = {
+            ...payload,
+            min: Number(minField.input.value),
+            max: Number(maxField.input.value),
+            step: Number(stepField.input.value),
+            default: Number(defaultNum.input.value),
+          };
+          if (
+            ![payload.min, payload.max, payload.step, payload.default].every(Number.isFinite) ||
+            payload.step <= 0
+          ) {
+            errorEl.textContent = "Enter valid numbers";
+            return;
+          }
         }
         save.disabled = true;
         try {
@@ -458,7 +590,9 @@ export function openFieldDefEditor({ anchor, field = null, categories = [], onSa
         minField.row,
         maxField.row,
         stepField.row,
-        defaultField.row,
+        defaultNum.row,
+        defaultStr.row,
+        defaultBoolRow,
         categoryRow.row,
         notesRow.row,
         errorEl,

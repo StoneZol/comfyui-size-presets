@@ -1,4 +1,4 @@
-"""SQLite library for named INT/FLOAT field presets."""
+"""SQLite library for named INT/FLOAT/BOOLEAN/STRING field presets."""
 
 from __future__ import annotations
 
@@ -14,9 +14,22 @@ from .db import (
 )
 
 MAX_FIELDS = 16
-ALLOWED_TYPES = ("INT", "FLOAT")
+ALLOWED_TYPES = ("INT", "FLOAT", "BOOLEAN", "STRING")
 DEFAULT_MIN = 0.0
 DEFAULT_MAX = 1_000_000_000.0
+
+
+def _normalize_type(raw) -> str:
+    typ = str(raw or "FLOAT").strip().upper()
+    if typ in ("BOOL", "BOOLEAN"):
+        return "BOOLEAN"
+    if typ == "STRING":
+        return "STRING"
+    if typ == "INT":
+        return "INT"
+    if typ == "FLOAT":
+        return "FLOAT"
+    return ""
 
 
 def _default_step(typ: str) -> float:
@@ -42,6 +55,114 @@ def _clamp_value(value: float, typ: str, min_v: float, max_v: float) -> Any:
     return int(round(number)) if typ == "INT" else float(number)
 
 
+def _coerce_bool(raw) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    text = str(raw or "").strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off", ""):
+        return False
+    return bool(raw)
+
+
+def _parse_string_list(raw) -> List[str]:
+    if isinstance(raw, list):
+        parts = [str(item).strip() for item in raw]
+        parts = [p for p in parts if p]
+        return parts or [""]
+    if raw is None:
+        return [""]
+    text = str(raw)
+    # Allow JSON array string
+    stripped = text.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, list):
+                return _parse_string_list(data)
+        except json.JSONDecodeError:
+            pass
+    parts = [p.strip() for p in text.split(",")]
+    parts = [p for p in parts if p]
+    return parts or [""]
+
+
+def _canonicalize_one_field(item: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None, "Field name is required"
+    if len(name) > 40:
+        return None, "Field name is too long"
+    typ = _normalize_type(item.get("type"))
+    if not typ:
+        return None, "Type must be INT, FLOAT, BOOLEAN, or STRING"
+
+    category = _normalize_category(item.get("category") or "")
+    notes = _normalize_notes(item.get("notes") or "")
+
+    if typ == "BOOLEAN":
+        return {
+            "name": name,
+            "type": typ,
+            "value": _coerce_bool(item.get("value", False)),
+            "min": 0.0,
+            "max": 1.0,
+            "step": 1.0,
+            "category": category,
+            "notes": notes,
+        }, None
+
+    if typ == "STRING":
+        values = _parse_string_list(item.get("value", item.get("default", "")))
+        return {
+            "name": name,
+            "type": typ,
+            "value": values,
+            "min": 0.0,
+            "max": 0.0,
+            "step": 1.0,
+            "category": category,
+            "notes": notes,
+        }, None
+
+    min_v = _coerce_bound(item.get("min"), DEFAULT_MIN, typ)
+    max_v = _coerce_bound(item.get("max"), DEFAULT_MAX, typ)
+    if min_v < -1e8:
+        min_v = 0.0
+    step_raw = item.get("step")
+    if step_raw is None or step_raw == "":
+        step_v = _default_step(typ)
+    else:
+        try:
+            step_v = float(step_raw)
+        except (TypeError, ValueError):
+            return None, f"Invalid step for “{name}”"
+        if not (step_v == step_v) or step_v <= 0:
+            return None, f"Step for “{name}” must be > 0"
+        if typ == "INT":
+            step_v = max(1.0, float(int(round(step_v))))
+    try:
+        number = float(item.get("value", 0))
+    except (TypeError, ValueError):
+        return None, f"Invalid value for “{name}”"
+    if not (number == number) or number in (float("inf"), float("-inf")):
+        return None, f"Invalid value for “{name}”"
+    value = _clamp_value(number, typ, min_v, max_v)
+    return {
+        "name": name,
+        "type": typ,
+        "value": value,
+        "min": int(min_v) if typ == "INT" else float(min_v),
+        "max": int(max_v) if typ == "INT" else float(max_v),
+        "step": int(step_v) if typ == "INT" else float(step_v),
+        "category": category,
+        "notes": notes,
+    }, None
+
+
 def canonicalize_fields(raw) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], str]:
     if isinstance(raw, str):
         try:
@@ -60,62 +181,29 @@ def canonicalize_fields(raw) -> Tuple[Optional[List[Dict[str, Any]]], Optional[s
     for item in raw:
         if not isinstance(item, dict):
             return None, "Invalid field", ""
-        name = str(item.get("name") or "").strip()
-        if not name:
-            return None, "Field name is required", ""
-        if len(name) > 40:
-            return None, "Field name is too long", ""
-        key = name.casefold()
+        parsed, error = _canonicalize_one_field(item)
+        if error or not parsed:
+            return None, error or "Invalid field", ""
+        key = parsed["name"].casefold()
         if key in seen:
-            return None, f"Duplicate field “{name}”", ""
+            return None, f"Duplicate field “{parsed['name']}”", ""
         seen.add(key)
-        typ = str(item.get("type") or "FLOAT").strip().upper()
-        if typ not in ALLOWED_TYPES:
-            return None, "Type must be INT or FLOAT", ""
-        min_v = _coerce_bound(item.get("min"), DEFAULT_MIN, typ)
-        max_v = _coerce_bound(item.get("max"), DEFAULT_MAX, typ)
-        step_raw = item.get("step")
-        if step_raw is None or step_raw == "":
-            step_v = _default_step(typ)
-        else:
-            try:
-                step_v = float(step_raw)
-            except (TypeError, ValueError):
-                return None, f"Invalid step for “{name}”", ""
-            if not (step_v == step_v) or step_v <= 0:
-                return None, f"Step for “{name}” must be > 0", ""
-            if typ == "INT":
-                step_v = max(1.0, float(int(round(step_v))))
-        try:
-            number = float(item.get("value", 0))
-        except (TypeError, ValueError):
-            return None, f"Invalid value for “{name}”", ""
-        if not (number == number) or number in (float("inf"), float("-inf")):
-            return None, f"Invalid value for “{name}”", ""
-        value = _clamp_value(number, typ, min_v, max_v)
-        fields.append(
-            {
-                "name": name,
-                "type": typ,
-                "value": value,
-                "min": int(min_v) if typ == "INT" else float(min_v),
-                "max": int(max_v) if typ == "INT" else float(max_v),
-                "step": int(step_v) if typ == "INT" else float(step_v),
-                "category": _normalize_category(item.get("category") or ""),
-                "notes": _normalize_notes(item.get("notes") or ""),
-            }
-        )
+        fields.append(parsed)
 
     key = "|".join(
-        f"{f['name'].casefold()}:{f['type']}:{_key_number(f['type'], f['value'])}" for f in fields
+        f"{f['name'].casefold()}:{f['type']}:{_key_value(f['type'], f['value'])}" for f in fields
     )
     return fields, None, key
 
 
-def _key_number(typ: str, value: Any) -> str:
+def _key_value(typ: str, value: Any) -> str:
     if typ == "INT":
         return str(int(value))
-    return f"{float(value):.6f}"
+    if typ == "FLOAT":
+        return f"{float(value):.6f}"
+    if typ == "BOOLEAN":
+        return "1" if value else "0"
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def fields_json(fields: List[Dict[str, Any]]) -> str:
@@ -477,9 +565,7 @@ def _get_or_create_field_category(conn, name: str) -> Tuple[Optional[int], str]:
 
 
 def _field_def_row(row) -> Dict:
-    typ = str(row["type"] or "FLOAT").upper()
-    if typ not in ALLOWED_TYPES:
-        typ = "FLOAT"
+    typ = _normalize_type(row["type"]) or "FLOAT"
     min_v = row["min_value"]
     max_v = row["max_value"]
     step_v = row["step_value"]
@@ -492,6 +578,20 @@ def _field_def_row(row) -> Dict:
         category = row["category"] or ""
     except (KeyError, IndexError):
         category = ""
+    try:
+        default_json = row["default_json"]
+    except (KeyError, IndexError):
+        default_json = None
+
+    if typ == "BOOLEAN":
+        default = bool(int(default_v or 0))
+    elif typ == "STRING":
+        default = _parse_string_list(default_json if default_json not in (None, "") else "")
+    elif typ == "INT":
+        default = int(default_v) if default_v is not None else 0
+    else:
+        default = float(default_v) if default_v is not None else 0.0
+
     return {
         "id": int(row["id"]),
         "name": row["name"] or "",
@@ -499,10 +599,19 @@ def _field_def_row(row) -> Dict:
         "min": None if min_v is None else (int(min_v) if typ == "INT" else float(min_v)),
         "max": None if max_v is None else (int(max_v) if typ == "INT" else float(max_v)),
         "step": None if step_v is None else (int(step_v) if typ == "INT" else float(step_v)),
-        "default": int(default_v) if typ == "INT" else float(default_v),
+        "default": default,
         "notes": notes,
         "category": category,
     }
+
+
+def _pack_field_def_defaults(parsed: Dict[str, Any]) -> Tuple[float, Optional[str]]:
+    typ = parsed["type"]
+    if typ == "BOOLEAN":
+        return (1.0 if parsed["default"] else 0.0), None
+    if typ == "STRING":
+        return 0.0, json.dumps(parsed["default"], ensure_ascii=False, separators=(",", ":"))
+    return float(parsed["default"]), None
 
 
 def _canonicalize_field_def(payload: Dict) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -511,9 +620,38 @@ def _canonicalize_field_def(payload: Dict) -> Tuple[Optional[Dict[str, Any]], Op
         return None, "Field name is required"
     if len(name) > 40:
         return None, "Field name is too long"
-    typ = str(payload.get("type") or "FLOAT").strip().upper()
-    if typ not in ALLOWED_TYPES:
-        return None, "Type must be INT or FLOAT"
+    typ = _normalize_type(payload.get("type"))
+    if not typ:
+        return None, "Type must be INT, FLOAT, BOOLEAN, or STRING"
+
+    notes = _normalize_notes(payload.get("notes") or "")
+    category = _normalize_category(payload.get("category") or "")
+    default_raw = payload.get("default", payload.get("value", 0 if typ != "STRING" else ""))
+
+    if typ == "BOOLEAN":
+        return {
+            "name": name,
+            "type": typ,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 1.0,
+            "default": _coerce_bool(default_raw),
+            "notes": notes,
+            "category": category,
+        }, None
+
+    if typ == "STRING":
+        return {
+            "name": name,
+            "type": typ,
+            "min": 0.0,
+            "max": 0.0,
+            "step": 1.0,
+            "default": _parse_string_list(default_raw),
+            "notes": notes,
+            "category": category,
+        }, None
+
     min_v = _coerce_bound(payload.get("min"), DEFAULT_MIN, typ)
     max_v = _coerce_bound(payload.get("max"), DEFAULT_MAX, typ)
     step_raw = payload.get("step")
@@ -529,10 +667,10 @@ def _canonicalize_field_def(payload: Dict) -> Tuple[Optional[Dict[str, Any]], Op
         if typ == "INT":
             step_v = max(1.0, float(int(round(step_v))))
     try:
-        default_raw = float(payload.get("default", payload.get("value", 0)))
+        number = float(default_raw)
     except (TypeError, ValueError):
         return None, "Invalid default"
-    default_v = _clamp_value(default_raw, typ, min_v, max_v)
+    default_v = _clamp_value(number, typ, min_v, max_v)
     return {
         "name": name,
         "type": typ,
@@ -540,8 +678,8 @@ def _canonicalize_field_def(payload: Dict) -> Tuple[Optional[Dict[str, Any]], Op
         "max": int(max_v) if typ == "INT" else float(max_v),
         "step": int(step_v) if typ == "INT" else float(step_v),
         "default": default_v,
-        "notes": _normalize_notes(payload.get("notes") or ""),
-        "category": _normalize_category(payload.get("category") or ""),
+        "notes": notes,
+        "category": category,
     }, None
 
 
@@ -559,6 +697,7 @@ def list_value_field_defs() -> Dict:
                     value_field_defs.max_value,
                     value_field_defs.step_value,
                     value_field_defs.default_value,
+                    value_field_defs.default_json,
                     value_field_defs.notes,
                     value_field_categories.name AS category
                 FROM value_field_defs
@@ -607,6 +746,7 @@ def save_value_field_def(payload: Dict) -> Dict:
     parsed, error = _canonicalize_field_def(payload or {})
     if error:
         return {"ok": False, "error": error}
+    default_num, default_json = _pack_field_def_defaults(parsed)
     with _lock:
         conn = _connect()
         try:
@@ -622,8 +762,8 @@ def save_value_field_def(payload: Dict) -> Dict:
             cur = conn.execute(
                 """
                 INSERT INTO value_field_defs
-                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (category_id, name, type, min_value, max_value, step_value, default_value, default_json, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     category_id,
@@ -632,7 +772,8 @@ def save_value_field_def(payload: Dict) -> Dict:
                     parsed["min"],
                     parsed["max"],
                     parsed["step"],
-                    parsed["default"],
+                    default_num,
+                    default_json,
                     parsed["notes"],
                 ),
             )
@@ -658,27 +799,36 @@ def upsert_value_field_def(payload: Dict) -> Dict:
         try:
             conn.execute("BEGIN")
             existing = conn.execute(
-                "SELECT id FROM value_field_defs WHERE name = ? COLLATE NOCASE",
+                "SELECT id, type FROM value_field_defs WHERE name = ? COLLATE NOCASE",
                 (parsed["name"],),
             ).fetchone()
             category_id, category_name = _get_or_create_field_category(conn, parsed["category"])
             if existing:
                 field_id = int(existing["id"])
+                # Type is immutable after create — keep stored type.
+                locked = _normalize_type(existing["type"]) or parsed["type"]
+                if locked != parsed["type"]:
+                    reparsed, re_err = _canonicalize_field_def({**payload, "type": locked})
+                    if re_err or not reparsed:
+                        conn.rollback()
+                        return {"ok": False, "error": re_err or "Invalid field"}
+                    parsed = reparsed
+                default_num, default_json = _pack_field_def_defaults(parsed)
                 conn.execute(
                     """
                     UPDATE value_field_defs
-                    SET category_id = ?, name = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
-                        default_value = ?, notes = ?, updated_at = datetime('now')
+                    SET category_id = ?, name = ?, min_value = ?, max_value = ?, step_value = ?,
+                        default_value = ?, default_json = ?, notes = ?, updated_at = datetime('now')
                     WHERE id = ?
                     """,
                     (
                         category_id,
                         parsed["name"],
-                        parsed["type"],
                         parsed["min"],
                         parsed["max"],
                         parsed["step"],
-                        parsed["default"],
+                        default_num,
+                        default_json,
                         parsed["notes"],
                         field_id,
                     ),
@@ -689,11 +839,12 @@ def upsert_value_field_def(payload: Dict) -> Dict:
                     "updated": True,
                     "field": {**parsed, "id": field_id, "category": category_name},
                 }
+            default_num, default_json = _pack_field_def_defaults(parsed)
             cur = conn.execute(
                 """
                 INSERT INTO value_field_defs
-                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (category_id, name, type, min_value, max_value, step_value, default_value, default_json, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     category_id,
@@ -702,7 +853,8 @@ def upsert_value_field_def(payload: Dict) -> Dict:
                     parsed["min"],
                     parsed["max"],
                     parsed["step"],
-                    parsed["default"],
+                    default_num,
+                    default_json,
                     parsed["notes"],
                 ),
             )
@@ -739,6 +891,7 @@ def _upsert_fields_into_library(conn, fields: List[Dict[str, Any]]) -> None:
             """
             SELECT
                 value_field_defs.id,
+                value_field_defs.type,
                 value_field_defs.category_id,
                 value_field_defs.notes,
                 value_field_categories.name AS category
@@ -750,35 +903,42 @@ def _upsert_fields_into_library(conn, fields: List[Dict[str, Any]]) -> None:
             (parsed["name"],),
         ).fetchone()
         if existing:
-            # Don't wipe library shelf metadata when preset slots have none yet.
+            locked = _normalize_type(existing["type"]) or parsed["type"]
+            if locked != parsed["type"]:
+                reparsed, re_err = _canonicalize_field_def({**item, "type": locked, "default": item.get("value")})
+                if re_err or not reparsed:
+                    continue
+                parsed = reparsed
             category = parsed["category"] or (existing["category"] or "")
             notes = parsed["notes"] or (existing["notes"] or "")
             category_id, _category_name = _get_or_create_field_category(conn, category)
+            default_num, default_json = _pack_field_def_defaults(parsed)
             conn.execute(
                 """
                 UPDATE value_field_defs
-                SET category_id = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
-                    default_value = ?, notes = ?, updated_at = datetime('now')
+                SET category_id = ?, min_value = ?, max_value = ?, step_value = ?,
+                    default_value = ?, default_json = ?, notes = ?, updated_at = datetime('now')
                 WHERE id = ?
                 """,
                 (
                     category_id,
-                    parsed["type"],
                     parsed["min"],
                     parsed["max"],
                     parsed["step"],
-                    parsed["default"],
+                    default_num,
+                    default_json,
                     notes,
                     int(existing["id"]),
                 ),
             )
         else:
             category_id, _category_name = _get_or_create_field_category(conn, parsed["category"])
+            default_num, default_json = _pack_field_def_defaults(parsed)
             conn.execute(
                 """
                 INSERT INTO value_field_defs
-                    (category_id, name, type, min_value, max_value, step_value, default_value, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (category_id, name, type, min_value, max_value, step_value, default_value, default_json, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     category_id,
@@ -787,27 +947,30 @@ def _upsert_fields_into_library(conn, fields: List[Dict[str, Any]]) -> None:
                     parsed["min"],
                     parsed["max"],
                     parsed["step"],
-                    parsed["default"],
+                    default_num,
+                    default_json,
                     parsed["notes"],
                 ),
             )
 
 
 def update_value_field_def(field_id: int, payload: Dict) -> Dict:
-    parsed, error = _canonicalize_field_def(payload or {})
-    if error:
-        return {"ok": False, "error": error}
     with _lock:
         conn = _connect()
         try:
             conn.execute("BEGIN")
             row = conn.execute(
-                "SELECT id FROM value_field_defs WHERE id = ?",
+                "SELECT id, type FROM value_field_defs WHERE id = ?",
                 (int(field_id),),
             ).fetchone()
             if not row:
                 conn.rollback()
                 return {"ok": False, "error": "Not found"}
+            locked_type = _normalize_type(row["type"]) or "FLOAT"
+            parsed, error = _canonicalize_field_def({**(payload or {}), "type": locked_type})
+            if error or not parsed:
+                conn.rollback()
+                return {"ok": False, "error": error or "Invalid field"}
             existing = conn.execute(
                 "SELECT id FROM value_field_defs WHERE name = ? COLLATE NOCASE AND id != ?",
                 (parsed["name"], int(field_id)),
@@ -816,21 +979,22 @@ def update_value_field_def(field_id: int, payload: Dict) -> Dict:
                 conn.rollback()
                 return {"ok": False, "conflicts": [{"name": parsed["name"]}]}
             category_id, category_name = _get_or_create_field_category(conn, parsed["category"])
+            default_num, default_json = _pack_field_def_defaults(parsed)
             conn.execute(
                 """
                 UPDATE value_field_defs
-                SET category_id = ?, name = ?, type = ?, min_value = ?, max_value = ?, step_value = ?,
-                    default_value = ?, notes = ?, updated_at = datetime('now')
+                SET category_id = ?, name = ?, min_value = ?, max_value = ?, step_value = ?,
+                    default_value = ?, default_json = ?, notes = ?, updated_at = datetime('now')
                 WHERE id = ?
                 """,
                 (
                     category_id,
                     parsed["name"],
-                    parsed["type"],
                     parsed["min"],
                     parsed["max"],
                     parsed["step"],
-                    parsed["default"],
+                    default_num,
+                    default_json,
                     parsed["notes"],
                     int(field_id),
                 ),

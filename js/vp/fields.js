@@ -3,6 +3,10 @@ import { GRIP_ICON_SVG } from "../sp/icons.js";
 export const MAX_FIELDS = 16;
 export const DEFAULT_MIN = 0;
 export const DEFAULT_MAX = 1_000_000_000;
+export const FIELD_TYPES = ["FLOAT", "INT", "BOOLEAN"];
+// STRING disabled for now — list/COMBO semantics TBD; normalizeField still loads legacy STRING.
+// export const FIELD_TYPES = ["FLOAT", "INT", "BOOLEAN", "STRING"];
+export const NUMERIC_TYPES = new Set(["FLOAT", "INT"]);
 
 export function selectOnFocus(input) {
   input.addEventListener("focus", () => {
@@ -28,26 +32,83 @@ export function newFieldId() {
   return `f${Math.random().toString(36).slice(2, 9)}`;
 }
 
+export function normalizeType(raw) {
+  const typ = String(raw || "FLOAT").trim().toUpperCase();
+  if (typ === "BOOL" || typ === "BOOLEAN") return "BOOLEAN";
+  if (typ === "STRING") return "STRING";
+  if (typ === "INT") return "INT";
+  if (typ === "FLOAT") return "FLOAT";
+  return "FLOAT";
+}
+
+export function isNumericType(type) {
+  return NUMERIC_TYPES.has(normalizeType(type));
+}
+
+export function socketType(type) {
+  return normalizeType(type);
+}
+
 export function defaultStep(type) {
-  return type === "INT" ? 1 : 0.01;
+  return normalizeType(type) === "INT" ? 1 : 0.01;
 }
 
 export function coerceBound(raw, fallback, type) {
   if (raw === null || raw === undefined || raw === "") return fallback;
   const number = Number(raw);
   if (!Number.isFinite(number)) return fallback;
-  return type === "INT" ? Math.round(number) : number;
+  return normalizeType(type) === "INT" ? Math.round(number) : number;
 }
 
 export function clampValue(value, type, min, max) {
+  const typ = normalizeType(type);
   const lo = Math.min(min, max);
   const hi = Math.max(min, max);
   const number = Math.max(lo, Math.min(hi, Number(value)));
-  if (!Number.isFinite(number)) return type === "INT" ? Math.round(lo) : lo;
-  return type === "INT" ? Math.round(number) : number;
+  if (!Number.isFinite(number)) return typ === "INT" ? Math.round(lo) : lo;
+  return typ === "INT" ? Math.round(number) : number;
 }
 
-export function defaultField(existing = []) {
+export function coerceBool(raw) {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  const text = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (["1", "true", "yes", "on"].includes(text)) return true;
+  if (["0", "false", "no", "off", ""].includes(text)) return false;
+  return Boolean(raw);
+}
+
+/** Comma-separated UI text ↔ string[]. Empty → [""]. */
+export function parseStringList(raw) {
+  if (Array.isArray(raw)) {
+    const parts = raw.map((item) => String(item ?? "").trim()).filter(Boolean);
+    return parts.length ? parts : [""];
+  }
+  if (raw == null) return [""];
+  const text = String(raw);
+  const stripped = text.trim();
+  if (stripped.startsWith("[") && stripped.endsWith("]")) {
+    try {
+      const data = JSON.parse(stripped);
+      if (Array.isArray(data)) return parseStringList(data);
+    } catch {
+      /* fall through */
+    }
+  }
+  const parts = text
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [""];
+}
+
+export function formatStringList(values) {
+  return parseStringList(values).join(", ");
+}
+
+export function defaultField(existing = [], type = "FLOAT") {
   const used = new Set(existing.map((f) => (f.name || "").trim().toLowerCase()));
   let n = 1;
   let name = "value";
@@ -55,26 +116,49 @@ export function defaultField(existing = []) {
     n += 1;
     name = `value_${n}`;
   }
+  const typ = normalizeType(type);
+  if (typ === "BOOLEAN") {
+    return {
+      id: newFieldId(),
+      name,
+      type: typ,
+      value: false,
+      min: 0,
+      max: 1,
+      step: 1,
+      category: "",
+      notes: "",
+    };
+  }
+  if (typ === "STRING") {
+    return {
+      id: newFieldId(),
+      name,
+      type: typ,
+      value: [""],
+      min: 0,
+      max: 0,
+      step: 1,
+      category: "",
+      notes: "",
+    };
+  }
   return {
     id: newFieldId(),
     name,
-    type: "FLOAT",
+    type: typ,
     value: 0,
     min: DEFAULT_MIN,
     max: DEFAULT_MAX,
-    step: 0.01,
+    step: defaultStep(typ),
     category: "",
     notes: "",
   };
 }
 
 export function fieldFromDef(def, existing = []) {
-  const base = defaultField(existing);
-  const type = String(def?.type || "FLOAT").toUpperCase() === "INT" ? "INT" : "FLOAT";
-  const min = coerceBound(def?.min, DEFAULT_MIN, type);
-  const max = coerceBound(def?.max, DEFAULT_MAX, type);
-  const step = coerceBound(def?.step, defaultStep(type), type) || defaultStep(type);
-  const value = clampValue(def?.default ?? def?.value ?? 0, type, min, max);
+  const typ = normalizeType(def?.type);
+  const base = defaultField(existing, typ);
   let name = String(def?.name || base.name).trim() || base.name;
   const used = new Set(existing.map((f) => (f.name || "").trim().toLowerCase()));
   if (used.has(name.toLowerCase())) {
@@ -82,14 +166,40 @@ export function fieldFromDef(def, existing = []) {
     while (used.has(`${name}_${i}`.toLowerCase())) i += 1;
     name = `${name}_${i}`;
   }
+
+  if (typ === "BOOLEAN") {
+    return {
+      ...base,
+      name,
+      type: typ,
+      value: coerceBool(def?.default ?? def?.value ?? false),
+      category: String(def?.category || "").trim(),
+      notes: String(def?.notes || "").trim(),
+    };
+  }
+  if (typ === "STRING") {
+    return {
+      ...base,
+      name,
+      type: typ,
+      value: parseStringList(def?.default ?? def?.value ?? ""),
+      category: String(def?.category || "").trim(),
+      notes: String(def?.notes || "").trim(),
+    };
+  }
+
+  const min = coerceBound(def?.min, DEFAULT_MIN, typ);
+  const max = coerceBound(def?.max, DEFAULT_MAX, typ);
+  const step = coerceBound(def?.step, defaultStep(typ), typ) || defaultStep(typ);
+  const value = clampValue(def?.default ?? def?.value ?? 0, typ, min, max);
   return {
     id: newFieldId(),
     name,
-    type,
+    type: typ,
     value,
     min,
     max,
-    step: type === "INT" ? Math.max(1, Math.round(step)) : step,
+    step: typ === "INT" ? Math.max(1, Math.round(step)) : step,
     category: String(def?.category || "").trim(),
     notes: String(def?.notes || "").trim(),
   };
@@ -97,10 +207,41 @@ export function fieldFromDef(def, existing = []) {
 
 export function normalizeField(raw) {
   const name = String(raw?.name || "").trim();
-  const type = String(raw?.type || "FLOAT").toUpperCase() === "INT" ? "INT" : "FLOAT";
+  const type = normalizeType(raw?.type);
+  const category = String(raw?.category || "").trim();
+  const notes = String(raw?.notes || "").trim();
+  const id = raw?.id ? String(raw.id) : newFieldId();
+
+  if (type === "BOOLEAN") {
+    return {
+      id,
+      name,
+      type,
+      value: coerceBool(raw?.value),
+      min: 0,
+      max: 1,
+      step: 1,
+      category,
+      notes,
+    };
+  }
+  if (type === "STRING") {
+    return {
+      id,
+      name,
+      type,
+      value: parseStringList(raw?.value),
+      min: 0,
+      max: 0,
+      step: 1,
+      category,
+      notes,
+    };
+  }
+
   const min = (() => {
     let v = coerceBound(raw?.min, DEFAULT_MIN, type);
-    if (v < -1e8) v = 0; // legacy wide-open negative default
+    if (v < -1e8) v = 0;
     return v;
   })();
   const max = coerceBound(raw?.max, DEFAULT_MAX, type);
@@ -108,19 +249,7 @@ export function normalizeField(raw) {
   if (!(step > 0)) step = defaultStep(type);
   if (type === "INT") step = Math.max(1, Math.round(step));
   const value = clampValue(raw?.value, type, min, max);
-  const field = {
-    name,
-    type,
-    value,
-    min,
-    max,
-    step,
-    category: String(raw?.category || "").trim(),
-    notes: String(raw?.notes || "").trim(),
-  };
-  if (raw?.id) field.id = String(raw.id);
-  else field.id = newFieldId();
-  return field;
+  return { id, name, type, value, min, max, step, category, notes };
 }
 
 export function parseFields(raw) {
@@ -142,6 +271,8 @@ export function fieldsJson(fields) {
 
 export function formatFieldValue(field) {
   const f = normalizeField(field);
+  if (f.type === "BOOLEAN") return f.value ? "true" : "false";
+  if (f.type === "STRING") return formatStringList(f.value);
   if (f.type === "INT") return String(f.value);
   const n = Number(f.value);
   if (Number.isInteger(n)) return String(n);
@@ -149,7 +280,15 @@ export function formatFieldValue(field) {
 }
 
 export function formatFieldRange(field) {
-  const f = normalizeField(field);
+  const f = normalizeField({
+    ...field,
+    value: field?.value ?? field?.default,
+  });
+  if (f.type === "BOOLEAN") return "BOOLEAN";
+  if (f.type === "STRING") {
+    const n = parseStringList(f.value).filter(Boolean).length || 1;
+    return `STRING · ${n} value${n === 1 ? "" : "s"}`;
+  }
   const unbounded = f.max >= DEFAULT_MAX - 1;
   if (unbounded && f.min <= 0) return `${f.type} · ≥0 · step ${f.step}`;
   if (unbounded) return `${f.type} · ${f.min}… · step ${f.step}`;
@@ -327,6 +466,22 @@ export function nextPresetCopyName(presets, category, title) {
 
 export function presetTitle(preset) {
   return String(preset?.name || "").trim() || formatFields(preset?.fields);
+}
+
+export function typeBadgeClass(type) {
+  const typ = normalizeType(type);
+  if (typ === "INT") return "vp-field-type is-int";
+  if (typ === "BOOLEAN") return "vp-field-type is-bool";
+  if (typ === "STRING") return "vp-field-type is-string";
+  return "vp-field-type";
+}
+
+export function makeTypeBadge(type, { title = "Type is fixed after create" } = {}) {
+  const badge = document.createElement("span");
+  badge.className = typeBadgeClass(type);
+  badge.textContent = normalizeType(type);
+  badge.title = title;
+  return badge;
 }
 
 export function makeFieldChips(fields) {

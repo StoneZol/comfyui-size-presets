@@ -157,7 +157,7 @@ const CSS = `
 }
 
 .vp-field-type {
-  flex: 0 0 48px;
+  flex: 0 0 52px;
   height: 28px;
   padding: 0;
   border-radius: 6px;
@@ -165,16 +165,38 @@ const CSS = `
   background: var(--comfy-input-bg, #252528);
   color: var(--descrip-text, #bbb);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  cursor: pointer;
+  letter-spacing: 0.03em;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
 }
 
 .vp-field-type.is-int {
   border-color: #5a5080;
   background: #2f2b3d;
   color: #e0dce8;
+}
+
+.vp-field-type.is-bool {
+  flex: 0 0 58px;
+  border-color: #3d5a4a;
+  background: #24332c;
+  color: #c8e0d4;
+}
+
+.vp-field-type.is-string {
+  flex: 0 0 52px;
+  border-color: #5a4a3d;
+  background: #332c24;
+  color: #e0d4c8;
+}
+
+button.vp-field-type {
+  cursor: pointer;
 }
 
 .vp-field-value {
@@ -192,6 +214,57 @@ const CSS = `
   /* Native spinner arrows fight with node selection / pointer routing. */
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+.vp-field-value-string {
+  flex: 1 1 120px;
+  min-width: 80px;
+}
+
+.vp-field-bool {
+  flex: 0 0 30px;
+  margin: 0 4px;
+}
+
+.sp-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--descrip-text, #aaa);
+  font-size: 11px;
+  user-select: none;
+}
+
+.sp-toggle {
+  position: relative;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: #46464c;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sp-toggle.on {
+  background: #6a9b7a;
+}
+
+.sp-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e8e8ea;
+  transition: left 0.15s ease;
+  pointer-events: none;
+}
+
+.sp-toggle.on .sp-toggle-knob {
+  left: 16px;
 }
 
 .vp-field-value::-webkit-outer-spin-button,

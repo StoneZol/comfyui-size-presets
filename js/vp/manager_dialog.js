@@ -17,25 +17,29 @@ import {
 } from "./api.js";
 import {
   clampValue,
+  coerceBool,
   defaultField,
   dropItemById,
   fieldCountLabel,
   fieldFromDef,
   formatFieldRange,
   formatFields,
+  formatStringList,
   isolatePointer,
   makeFieldChips,
   makeFieldOrderControls,
+  makeTypeBadge,
   MAX_FIELDS,
   moveItemToIndex,
   normalizeField,
   nextPresetCopyName,
   notesPreview,
+  parseStringList,
   presetTitle,
   selectOnFocus,
   uniqueCopyName,
 } from "./fields.js";
-import { openFieldConfigPopup, openFieldDefEditor, openFieldLibraryPopup } from "./field_config.js";
+import { openFieldConfigPopup, openFieldDefEditor, openFieldLibraryPopup, openFieldTypePicker } from "./field_config.js";
 import { emptyShelfMatchesSearch, matchesValueField, matchesValuePreset, parseSearchQuery } from "../sp/search.js";
 import { presetSearchPlaceholder } from "./prefs.js";
 const UNCATEGORISED = "Uncategorised";
@@ -206,22 +210,57 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           fieldName.maxLength = 40;
           fieldName.value = field.name;
 
-          const typeBtn = document.createElement("button");
-          typeBtn.type = "button";
-          typeBtn.className = `vp-field-type${field.type === "INT" ? " is-int" : ""}`;
-          typeBtn.textContent = field.type;
-          typeBtn.title = "Toggle INT / FLOAT";
+          const typeBadge = makeTypeBadge(field.type);
 
-          const valueInput = document.createElement("input");
-          valueInput.className = "vp-field-value";
-          valueInput.type = "number";
-          valueInput.min = String(field.min);
-          valueInput.max = String(field.max);
-          valueInput.step = String(field.step);
-          valueInput.value = String(field.value);
-          valueInput.title = `${field.min} … ${field.max} · step ${field.step}`;
-          selectOnFocus(valueInput);
-          isolatePointer(valueInput);
+          let valueControl;
+          if (field.type === "BOOLEAN") {
+            valueControl = document.createElement("div");
+            valueControl.className = "sp-toggle vp-field-bool";
+            valueControl.setAttribute("role", "switch");
+            if (field.value) valueControl.classList.add("on");
+            valueControl.setAttribute("aria-checked", field.value ? "true" : "false");
+            valueControl.appendChild(Object.assign(document.createElement("div"), { className: "sp-toggle-knob" }));
+            isolatePointer(valueControl);
+            valueControl.addEventListener("click", (e) => {
+              e.stopPropagation();
+              fields[index].value = !coerceBool(fields[index].value);
+              valueControl.classList.toggle("on", fields[index].value);
+              valueControl.setAttribute("aria-checked", fields[index].value ? "true" : "false");
+            });
+          } else if (field.type === "STRING") {
+            valueControl = document.createElement("input");
+            valueControl.className = "vp-field-value vp-field-value-string";
+            valueControl.type = "text";
+            valueControl.placeholder = "a, b, c";
+            valueControl.value = formatStringList(field.value);
+            selectOnFocus(valueControl);
+            isolatePointer(valueControl);
+            valueControl.addEventListener("change", () => {
+              fields[index].value = parseStringList(valueControl.value);
+              valueControl.value = formatStringList(fields[index].value);
+            });
+          } else {
+            valueControl = document.createElement("input");
+            valueControl.className = "vp-field-value";
+            valueControl.type = "number";
+            valueControl.min = String(field.min);
+            valueControl.max = String(field.max);
+            valueControl.step = String(field.step);
+            valueControl.value = String(field.value);
+            valueControl.title = `${field.min} … ${field.max} · step ${field.step}`;
+            selectOnFocus(valueControl);
+            isolatePointer(valueControl);
+            valueControl.addEventListener("change", () => {
+              fields[index].value = clampValue(
+                valueControl.value,
+                fields[index].type,
+                fields[index].min,
+                fields[index].max,
+              );
+              valueControl.value = String(fields[index].value);
+            });
+          }
+
           isolatePointer(fieldName);
 
           const configBtn = document.createElement("button");
@@ -258,31 +297,13 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
             fields[index].name =
               fieldName.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
           });
-          typeBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            fields[index] = normalizeField({
-              ...fields[index],
-              type: fields[index].type === "INT" ? "FLOAT" : "INT",
-              step: fields[index].type === "INT" ? 0.01 : 1,
-            });
-            paintFields();
-          });
-          valueInput.addEventListener("change", () => {
-            fields[index].value = clampValue(
-              valueInput.value,
-              fields[index].type,
-              fields[index].min,
-              fields[index].max,
-            );
-            valueInput.value = String(fields[index].value);
-          });
           configBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             openFieldConfigPopup({
               anchor: configBtn,
               field: fields[index],
               onSave: (next) => {
-                fields[index] = normalizeField({ ...next, id: fields[index].id });
+                fields[index] = normalizeField({ ...next, id: fields[index].id, type: fields[index].type });
                 paintFields();
                 reposition?.();
               },
@@ -296,7 +317,7 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
             reposition?.();
           });
 
-          row.append(order.dragHandle, order.pos, fieldName, typeBtn, valueInput, configBtn, removeBtn);
+          row.append(order.dragHandle, order.pos, fieldName, typeBadge, valueControl, configBtn, removeBtn);
           order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
@@ -309,9 +330,14 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
         openFieldLibraryPopup({
           anchor: addBtn,
           onBlank: () => {
-            fields.push(defaultField(fields));
-            paintFields();
-            reposition?.();
+            openFieldTypePicker({
+              anchor: addBtn,
+              onPick: (type) => {
+                fields.push(defaultField(fields, type));
+                paintFields();
+                reposition?.();
+              },
+            });
           },
           onPick: (def) => {
             fields.push(fieldFromDef(def, fields));
@@ -344,13 +370,31 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
         const rows = [...fieldsWrap.querySelectorAll(".vp-field-row")];
         const next = rows.map((row, index) => {
           const nameEl = row.querySelector(".vp-field-name");
-          const valueEl = row.querySelector(".vp-field-value");
-          const typeEl = row.querySelector(".vp-field-type");
           const others = fields.filter((_, i) => i !== index);
+          const current = fields[index] || defaultField(others);
+          const name = nameEl?.value.trim() || defaultField(others).name;
+          if (current.type === "STRING") {
+            const valueEl = row.querySelector(".vp-field-value-string, .vp-field-value");
+            return normalizeField({
+              ...current,
+              name,
+              type: current.type,
+              value: parseStringList(valueEl?.value ?? current.value),
+            });
+          }
+          if (current.type === "BOOLEAN") {
+            return normalizeField({
+              ...current,
+              name,
+              type: current.type,
+              value: coerceBool(current.value),
+            });
+          }
+          const valueEl = row.querySelector(".vp-field-value");
           return normalizeField({
-            ...fields[index],
-            name: nameEl?.value.trim() || defaultField(others).name,
-            type: typeEl?.textContent,
+            ...current,
+            name,
+            type: current.type,
             value: valueEl?.value,
           });
         });

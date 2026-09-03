@@ -1,10 +1,10 @@
-"""Size Presets nodes — size pairs and named INT/FLOAT values."""
+"""Size Presets nodes — size pairs and named INT/FLOAT/BOOLEAN/STRING values."""
 
 from .db.values import MAX_FIELDS, canonicalize_fields
 
 
 class AnyType(str):
-    """Wildcard socket type so frontend INT/FLOAT labels control connections."""
+    """Wildcard socket type so frontend labels control connections."""
 
     def __ne__(self, _other):
         return False
