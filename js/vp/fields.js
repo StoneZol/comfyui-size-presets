@@ -7,6 +7,10 @@ export function selectOnFocus(input) {
   input.addEventListener("mouseup", (e) => e.preventDefault());
 }
 
+export function newFieldId() {
+  return `f${Math.random().toString(36).slice(2, 9)}`;
+}
+
 export function defaultField(existing = []) {
   const used = new Set(existing.map((f) => (f.name || "").trim().toLowerCase()));
   let n = 1;
@@ -15,7 +19,7 @@ export function defaultField(existing = []) {
     n += 1;
     name = `value_${n}`;
   }
-  return { name, type: "FLOAT", value: 0 };
+  return { id: newFieldId(), name, type: "FLOAT", value: 0 };
 }
 
 export function normalizeField(raw) {
@@ -23,7 +27,10 @@ export function normalizeField(raw) {
   const type = String(raw?.type || "FLOAT").toUpperCase() === "INT" ? "INT" : "FLOAT";
   const number = Number(raw?.value);
   const value = Number.isFinite(number) ? (type === "INT" ? Math.round(number) : number) : 0;
-  return { name, type, value };
+  const field = { name, type, value };
+  if (raw?.id) field.id = String(raw.id);
+  else field.id = newFieldId();
+  return field;
 }
 
 export function parseFields(raw) {
