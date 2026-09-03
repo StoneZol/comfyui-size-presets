@@ -3,8 +3,9 @@ import { GRIP_ICON_SVG } from "../sp/icons.js";
 export const MAX_FIELDS = 16;
 export const DEFAULT_MIN = 0;
 export const DEFAULT_MAX = 1_000_000_000;
-export const FIELD_TYPES = ["FLOAT", "INT", "BOOLEAN"];
-// STRING disabled for now — list/COMBO semantics TBD; normalizeField still loads legacy STRING.
+export const FIELD_TYPES = ["FLOAT", "INT"];
+// BOOLEAN / STRING disabled for now — semantics TBD (e.g. enable/disable vs true/false; COMBO vs list).
+// normalizeField still loads legacy BOOLEAN/STRING if present in saved presets.
 // export const FIELD_TYPES = ["FLOAT", "INT", "BOOLEAN", "STRING"];
 export const NUMERIC_TYPES = new Set(["FLOAT", "INT"]);
 
@@ -258,10 +259,10 @@ export function parseFields(raw) {
     try {
       data = JSON.parse(raw || "[]");
     } catch {
-      return [defaultField()];
+      return [];
     }
   }
-  if (!Array.isArray(data) || !data.length) return [defaultField()];
+  if (!Array.isArray(data)) return [];
   return data.slice(0, MAX_FIELDS).map(normalizeField);
 }
 
@@ -476,7 +477,7 @@ export function typeBadgeClass(type) {
   return "vp-field-type";
 }
 
-export function makeTypeBadge(type, { title = "Type is fixed after create" } = {}) {
+export function makeTypeBadge(type, { title = "Click to replace type" } = {}) {
   const badge = document.createElement("span");
   badge.className = typeBadgeClass(type);
   badge.textContent = normalizeType(type);

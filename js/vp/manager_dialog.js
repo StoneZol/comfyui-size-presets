@@ -195,7 +195,6 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
       addBtn.innerHTML = `${PLUS_ICON_SVG}<span>Add field</span>`;
 
       let fields = (preset.fields || []).map(normalizeField);
-      if (!fields.length) fields = [defaultField()];
 
       function paintFields() {
         fieldsWrap.replaceChildren();
@@ -274,7 +273,6 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           removeBtn.className = "vp-field-remove";
           removeBtn.title = "Remove field";
           removeBtn.textContent = "×";
-          removeBtn.disabled = fields.length <= 1;
 
           const order = makeFieldOrderControls({
             index,
@@ -297,6 +295,23 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
             fields[index].name =
               fieldName.value.trim() || defaultField(fields.filter((_, i) => i !== index)).name;
           });
+          typeBadge.title = "Replace field type";
+          typeBadge.style.cursor = "pointer";
+          typeBadge.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openFieldTypePicker({
+              anchor: typeBadge,
+              onPick: (type) => {
+                if (type === fields[index].type) return;
+                fields[index] = defaultField(
+                  fields.filter((_, i) => i !== index),
+                  type,
+                );
+                paintFields();
+                reposition?.();
+              },
+            });
+          });
           configBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             openFieldConfigPopup({
@@ -312,7 +327,6 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           removeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             fields = fields.filter((_, i) => i !== index);
-            if (!fields.length) fields = [defaultField()];
             paintFields();
             reposition?.();
           });
@@ -321,6 +335,14 @@ function openEditFieldsPopup({ anchor, preset, onSaved }) {
           order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
+        if (!fields.length) {
+          const empty = document.createElement("div");
+          empty.className = "sp-popup-message";
+          empty.style.margin = "0";
+          empty.style.padding = "4px 2px";
+          empty.textContent = "No fields — add one below";
+          fieldsWrap.appendChild(empty);
+        }
         addBtn.disabled = fields.length >= MAX_FIELDS;
       }
 

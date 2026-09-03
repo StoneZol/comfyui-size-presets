@@ -232,7 +232,7 @@ export function openFieldTypePicker({ anchor, onPick, nested = true }) {
         const badge = makeTypeBadge(typ, { title: typ });
         badge.style.pointerEvents = "none";
         const label = document.createElement("span");
-        label.textContent = typ === "BOOLEAN" ? "BOOLEAN" : typ;
+        label.textContent = typ;
         btn.append(badge, label);
         btn.style.display = "flex";
         btn.style.alignItems = "center";

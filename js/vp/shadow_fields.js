@@ -31,11 +31,19 @@ export function hideOnCanvasKeepInPanel(widget) {
 export function hideDataWidget(widget) {
   if (!widget) return;
   widget.hidden = true;
+  // Must stay serializable — blank type drops fields_json from widgets_values,
+  // so deletes/edits vanish after refresh and the previous payload comes back.
+  widget.serialize = true;
   widget.computeSize = () => [0, -4];
   widget.draw = () => {};
   widget.mouse = () => false;
-  widget.options = { ...(widget.options || {}), hidden: true };
-  widget.type = "";
+  if (!widget.type || widget.type === "converted-widget") widget.type = "text";
+  widget.options = {
+    ...(widget.options || {}),
+    hidden: true,
+    serialize: true,
+    multiline: true,
+  };
   const el = widget.element || widget.inputEl || widget.textEl || widget.domElement;
   if (el?.style) el.style.display = "none";
 }
@@ -67,5 +75,7 @@ export function createShadowNumber(node, field) {
   widget.value = field.value;
   hideOnCanvasKeepInPanel(widget);
   widget.type = "number";
+  widget.serialize = false;
+  if (widget.options) widget.options.serialize = false;
   return widget;
 }

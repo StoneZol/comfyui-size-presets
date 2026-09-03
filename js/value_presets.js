@@ -76,7 +76,6 @@ app.registerExtension({
         );
       }
       hideDataWidget(dataWidget);
-      dataWidget.type = "";
 
       let fields = parseFields(dataWidget.value);
       let uiWidget = null;
@@ -114,10 +113,20 @@ app.registerExtension({
 
       root.append(fieldsWrap, addBtn, libraryRow, managerBtn);
 
+      function resolveDataWidget() {
+        dataWidget = node.widgets?.find((w) => w.name === "fields_json") || dataWidget;
+        if (dataWidget) hideDataWidget(dataWidget);
+        return dataWidget;
+      }
+
       function persist({ light = false } = {}) {
-        if (!dataWidget) return;
-        dataWidget.value = fieldsJson(fields);
+        const widget = resolveDataWidget();
+        if (!widget) return;
+        widget.value = fieldsJson(fields);
+        widget.serialize = true;
+        if (widget.options) widget.options.serialize = true;
         node.setDirtyCanvas(true, !light);
+        if (node.graph) node.graph.setDirtyCanvas?.(true, !light);
       }
 
       function collectFromShadows() {
@@ -167,12 +176,12 @@ app.registerExtension({
         }
       }
 
-      function rebuildShadows() {
-        collectFromShadows();
+      /** @param {{ harvest?: boolean }} [opts] harvest=false after structural edits (add/remove/reorder). */
+      function rebuildShadows({ harvest = true } = {}) {
+        if (harvest) collectFromShadows();
         removeShadows();
         for (const field of fields) addShadow(field);
-        hideDataWidget(dataWidget);
-        dataWidget.type = "";
+        resolveDataWidget();
       }
 
       function writeShadow(field) {
@@ -191,6 +200,8 @@ app.registerExtension({
         if (widget.value !== field.value) widget.value = field.value;
         hideOnCanvasKeepInPanel(widget);
         widget.type = "number";
+        widget.serialize = false;
+        if (widget.options) widget.options.serialize = false;
         syncing = false;
       }
 
@@ -255,7 +266,7 @@ app.registerExtension({
       function applyFields(next, { rebuild = false } = {}) {
         fields = (next || []).slice(0, MAX_FIELDS).map(normalizeField);
         persist();
-        if (rebuild) rebuildShadows();
+        if (rebuild) rebuildShadows({ harvest: false });
         else for (const field of fields) writeShadow(field);
         syncOutputs();
         paint();
@@ -355,7 +366,6 @@ app.registerExtension({
           removeBtn.className = "vp-field-remove";
           removeBtn.title = "Remove field";
           removeBtn.textContent = "×";
-          removeBtn.disabled = fields.length <= 1;
 
           const order = makeFieldOrderControls({
             index,
@@ -365,14 +375,14 @@ app.registerExtension({
               if (from < 0) return;
               fields = moveItemToIndex(fields, from, toIndex);
               persist();
-              rebuildShadows();
+              rebuildShadows({ harvest: false });
               syncOutputs();
               paint();
             },
             onDrop: (fromId, toId, after) => {
               fields = dropItemById(fields, fromId, toId, after);
               persist();
-              rebuildShadows();
+              rebuildShadows({ harvest: false });
               syncOutputs();
               paint();
             },
@@ -387,6 +397,26 @@ app.registerExtension({
             syncOutputs();
             paint();
           });
+          typeBadge.title = "Replace field type";
+          typeBadge.style.cursor = "pointer";
+          typeBadge.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openFieldTypePicker({
+              anchor: typeBadge,
+              nested: false,
+              onPick: (type) => {
+                if (type === field.type) return;
+                fields[index] = defaultField(
+                  fields.filter((_, i) => i !== index),
+                  type,
+                );
+                persist();
+                rebuildShadows({ harvest: false });
+                syncOutputs();
+                paint();
+              },
+            });
+          });
           configBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             openFieldConfigPopup({
@@ -396,7 +426,7 @@ app.registerExtension({
               onSave: (next) => {
                 fields[index] = normalizeField({ ...next, id: field.id, type: field.type });
                 persist();
-                rebuildShadows();
+                rebuildShadows({ harvest: false });
                 syncOutputs();
                 paint();
               },
@@ -405,9 +435,8 @@ app.registerExtension({
           removeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             fields = fields.filter((_, i) => i !== index);
-            if (!fields.length) fields = [defaultField()];
             persist();
-            rebuildShadows();
+            rebuildShadows({ harvest: false });
             syncOutputs();
             paint();
           });
@@ -416,6 +445,14 @@ app.registerExtension({
           order.wireRowDrop(row);
           fieldsWrap.appendChild(row);
         });
+        if (!fields.length) {
+          const empty = document.createElement("div");
+          empty.className = "sp-popup-message";
+          empty.style.margin = "0";
+          empty.style.padding = "4px 2px";
+          empty.textContent = "No fields — add one below";
+          fieldsWrap.appendChild(empty);
+        }
         addBtn.disabled = fields.length >= MAX_FIELDS;
         hideDuplicateCanvasFields();
         resize();
@@ -465,8 +502,7 @@ app.registerExtension({
       const onResize = node.onResize;
       node.onResize = function () {
         const result = onResize ? onResize.apply(this, arguments) : undefined;
-        hideDataWidget(dataWidget);
-        dataWidget.type = "";
+        resolveDataWidget();
         for (const w of node.widgets || []) {
           if (isShadowFieldName(w.name)) hideOnCanvasKeepInPanel(w);
         }
@@ -477,13 +513,28 @@ app.registerExtension({
       const onConfigure = node.onConfigure;
       node.onConfigure = function () {
         const result = onConfigure ? onConfigure.apply(this, arguments) : undefined;
-        dataWidget = node.widgets?.find((w) => w.name === "fields_json") || dataWidget;
-        hideDataWidget(dataWidget);
-        dataWidget.type = "";
+        resolveDataWidget();
         fields = parseFields(dataWidget?.value);
-        rebuildShadows();
+        rebuildShadows({ harvest: false });
         syncOutputs();
         paint();
+        return result;
+      };
+
+      const onSerialize = node.onSerialize;
+      node.onSerialize = function (info) {
+        persist({ light: true });
+        const result = onSerialize ? onSerialize.apply(this, arguments) : undefined;
+        // Force the stored payload after LiteGraph snapshots widget values.
+        if (info && dataWidget) {
+          const serializable = (node.widgets || []).filter(
+            (w) => w.serialize !== false && w.options?.serialize !== false,
+          );
+          const slot = serializable.indexOf(dataWidget);
+          if (slot >= 0 && Array.isArray(info.widgets_values)) {
+            info.widgets_values[slot] = dataWidget.value;
+          }
+        }
         return result;
       };
 
@@ -501,7 +552,7 @@ app.registerExtension({
         };
       }
 
-      rebuildShadows();
+      rebuildShadows({ harvest: false });
       syncOutputs();
       paint();
       return r;
