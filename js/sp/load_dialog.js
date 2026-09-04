@@ -2,6 +2,7 @@ import { CHEVRON_ICON_SVG } from "./icons.js";
 import { formatSize, listSizePresets } from "./api.js";
 import { makeAspectPreview } from "./styles.js";
 import { openPopup } from "./popup.js";
+import { matchesSizePreset, parseSearchQuery } from "./search.js";
 
 const UNCATEGORISED = "Uncategorised";
 
@@ -91,32 +92,24 @@ function makeFolder({ title, presets, expanded, onLoad }) {
 }
 
 function matchesPreset(preset, query) {
-  if (!query) return true;
-  const haystack = [
-    preset.category || UNCATEGORISED,
-    String(preset.width),
-    String(preset.height),
-    formatSize(preset.width, preset.height),
-  ]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(query);
+  return matchesSizePreset(preset, query, { emptyFolder: UNCATEGORISED });
 }
 
 function paintPresetList(list, presets, query, onLoad) {
-  const q = (query || "").trim().toLowerCase();
-  const matched = presets.filter((preset) => matchesPreset(preset, q));
+  const raw = query || "";
+  const { shelf, tokens, hasShelfFilter } = parseSearchQuery(raw);
+  const searching = hasShelfFilter || tokens.length > 0;
+  const matched = presets.filter((preset) => matchesPreset(preset, raw));
   list.replaceChildren();
   if (!matched.length) {
     const empty = document.createElement("div");
     empty.className = "sp-popup-message";
-    empty.textContent = q ? "No presets" : "No saved presets yet.";
+    empty.textContent = searching ? "No presets" : "No saved presets yet.";
     list.appendChild(empty);
     return;
   }
 
   const grouped = groupPresets(matched);
-  const searching = Boolean(q);
 
   if (grouped.uncategorised.length) {
     list.appendChild(
@@ -169,7 +162,7 @@ export function openLoadPresetPopup({ anchor, onPick }) {
           const search = document.createElement("input");
           search.className = "sp-popup-input";
           search.type = "text";
-          search.placeholder = "search category or size";
+          search.placeholder = "category/size or 1024";
 
           const list = document.createElement("div");
           list.className = "sp-preset-list";

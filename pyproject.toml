@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-size-presets"
-description = "Save and load width/height size presets for ComfyUI — native INT inputs, categories, search, and a built-in SQLite library."
-version = "1.0.0"
+description = "Save and load width/height size presets and named INT/FLOAT value presets for ComfyUI — field library, categories, search, and a built-in SQLite store."
+version = "2.0.0"
 license = { file = "LICENSE" }
 requires-python = ">=3.8"
 dependencies = []

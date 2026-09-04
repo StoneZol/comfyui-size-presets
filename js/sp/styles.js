@@ -129,6 +129,321 @@ const CSS = `
   max-height: 32px;
 }
 
+.vp-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vp-field-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vp-field-name {
+  flex: 1 1 72px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.vp-field-type {
+  flex: 0 0 52px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #252528);
+  color: var(--descrip-text, #bbb);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.vp-field-type.is-int {
+  border-color: #5a5080;
+  background: #2f2b3d;
+  color: #e0dce8;
+}
+
+.vp-field-type.is-bool {
+  flex: 0 0 58px;
+  border-color: #3d5a4a;
+  background: #24332c;
+  color: #c8e0d4;
+}
+
+.vp-field-type.is-string {
+  flex: 0 0 52px;
+  border-color: #5a4a3d;
+  background: #332c24;
+  color: #e0d4c8;
+}
+
+button.vp-field-type {
+  cursor: pointer;
+}
+
+.vp-field-value {
+  flex: 0 0 76px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-input-bg, #222);
+  color: var(--input-text, #ddd);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+  /* Native spinner arrows fight with node selection / pointer routing. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vp-field-value-string {
+  flex: 1 1 120px;
+  min-width: 80px;
+}
+
+.vp-field-bool {
+  flex: 0 0 30px;
+  margin: 0 4px;
+}
+
+.sp-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--descrip-text, #aaa);
+  font-size: 11px;
+  user-select: none;
+}
+
+.sp-toggle {
+  position: relative;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: #46464c;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sp-toggle.on {
+  background: #6a9b7a;
+}
+
+.sp-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e8e8ea;
+  transition: left 0.15s ease;
+  pointer-events: none;
+}
+
+.sp-toggle.on .sp-toggle-knob {
+  left: 16px;
+}
+
+.vp-field-value::-webkit-outer-spin-button,
+.vp-field-value::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.vp-field-remove {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--descrip-text, #888);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+
+.vp-drag-handle {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  cursor: grab;
+  user-select: none;
+}
+
+.vp-drag-handle:active {
+  cursor: grabbing;
+}
+
+.vp-drag-handle svg {
+  width: 10px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.vp-field-pos {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  background: var(--comfy-input-bg, #1c1c1f);
+  color: #999;
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.vp-field-pos:focus {
+  border-color: #6d5aa8;
+  color: var(--input-text, #ddd);
+}
+
+.vp-field-pos::-webkit-outer-spin-button,
+.vp-field-pos::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.vp-field-row.dragging {
+  opacity: 0.4;
+}
+
+.vp-field-row.drop-above {
+  box-shadow: inset 0 2px 0 #a78bfa;
+}
+
+.vp-field-row.drop-below {
+  box-shadow: inset 0 -2px 0 #a78bfa;
+}
+
+.vp-field-config {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--descrip-text, #888);
+  cursor: pointer;
+  padding: 0;
+}
+
+.vp-field-config svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.vp-field-config:hover {
+  color: var(--input-text, #ddd);
+  border-color: var(--border-color, #444);
+  background: var(--comfy-menu-bg, #1e1e1e);
+}
+
+.vp-field-remove:hover {
+  color: #e07070;
+  border-color: #7a3a3a;
+}
+
+.vp-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-color, #555);
+  background: transparent;
+  color: var(--descrip-text, #aaa);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.vp-add-btn:hover {
+  color: var(--input-text, #ddd);
+  border-color: #6d5aa8;
+}
+
+.vp-add-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.vp-add-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vp-field-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #444);
+  background: var(--comfy-menu-bg, #1e1e1e);
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--input-text, #ddd);
+}
+
+.vp-chip-type {
+  color: var(--descrip-text, #888);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 [data-testid="node-widget"]:has(.sp-root),
 .lg-node-widget:has(.sp-root),
 .comfy-widget-row:has(.sp-root) {

@@ -7,7 +7,8 @@ import sqlite3
 import threading
 from typing import Dict, List, Optional, Tuple
 
-_lock = threading.Lock()
+lock = threading.Lock()
+_lock = lock
 
 UNCATEGORISED_NAME = "Uncategorised"
 
@@ -47,9 +48,84 @@ def _migrate(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(category_id, width, height)
         );
+
+        CREATE TABLE IF NOT EXISTS value_categories (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL COLLATE NOCASE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(name)
+        );
+
+        CREATE TABLE IF NOT EXISTS value_presets (
+            id INTEGER PRIMARY KEY,
+            category_id INTEGER REFERENCES value_categories(id) ON DELETE CASCADE,
+            name TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            fields_json TEXT NOT NULL,
+            fields_key TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS value_field_categories (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL COLLATE NOCASE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(name)
+        );
+
+        CREATE TABLE IF NOT EXISTS value_field_defs (
+            id INTEGER PRIMARY KEY,
+            category_id INTEGER REFERENCES value_field_categories(id) ON DELETE SET NULL,
+            name TEXT NOT NULL COLLATE NOCASE,
+            type TEXT NOT NULL,
+            min_value REAL,
+            max_value REAL,
+            step_value REAL,
+            default_value REAL NOT NULL DEFAULT 0,
+            default_json TEXT,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(name)
+        );
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_size_presets_category ON size_presets(category_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_presets_category ON value_presets(category_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_presets_key ON value_presets(category_id, fields_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_field_defs_name ON value_field_defs(name)")
+    _migrate_value_extras(conn)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_value_field_defs_category ON value_field_defs(category_id)")
+
+
+def _migrate_value_extras(conn: sqlite3.Connection) -> None:
+    preset_cols = {row[1] for row in conn.execute("PRAGMA table_info(value_presets)").fetchall()}
+    if "name" not in preset_cols:
+        conn.execute("ALTER TABLE value_presets ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+    if "notes" not in preset_cols:
+        conn.execute("ALTER TABLE value_presets ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    for row in conn.execute("SELECT id, name FROM value_presets").fetchall():
+        title = (row["name"] or "").strip()
+        if title:
+            continue
+        conn.execute("UPDATE value_presets SET name = ? WHERE id = ?", (f"Preset {int(row['id'])}", int(row["id"])))
+
+    field_cols = {row[1] for row in conn.execute("PRAGMA table_info(value_field_defs)").fetchall()}
+    if "category_id" not in field_cols:
+        conn.execute("ALTER TABLE value_field_defs ADD COLUMN category_id INTEGER REFERENCES value_field_categories(id) ON DELETE SET NULL")
+    if "notes" not in field_cols:
+        conn.execute("ALTER TABLE value_field_defs ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    if "default_json" not in field_cols:
+        conn.execute("ALTER TABLE value_field_defs ADD COLUMN default_json TEXT")
+    # Old wide-open mins were -1e9; clamp defaults to 0 for new UX.
+    conn.execute(
+        """
+        UPDATE value_field_defs
+        SET min_value = 0
+        WHERE min_value IS NOT NULL AND min_value < 0 AND min_value <= -100000000
+        """
+    )
 
 
 def init_db() -> None:
